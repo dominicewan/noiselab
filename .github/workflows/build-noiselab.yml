@@ -1,0 +1,36 @@
+name: Build NoiseLab (Windows)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "source/plugins/NoiseLab/**"
+      - "source/lib/**"
+      - "build/windows/NoiseLab.vcxproj"
+      - ".github/workflows/build-noiselab.yml"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: microsoft/setup-msbuild@v2
+
+      # The SDK projects are set to the VS2019 toolset (v142) and a fixed Windows SDK version.
+      # Override both on the command line so the runner's VS2022 builds them without editing
+      # the project file.
+      - name: Build NoiseLab.dll
+        run: >
+          msbuild build\windows\NoiseLab.vcxproj
+          /m
+          /p:Configuration=Release
+          /p:Platform=x64
+          /p:PlatformToolset=v143
+          /p:WindowsTargetPlatformVersion=10.0
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NoiseLab-windows-x64
+          path: binaries/x64/Release/NoiseLab.dll
+          if-no-files-found: error
