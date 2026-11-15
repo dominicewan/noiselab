@@ -3,7 +3,7 @@
 #include <chrono>
 
 // NoiseLab - procedural noise source for Resolume (FFGL 2.x).
-// Step 4a: 16 noise types with shaping, scroll and warp, a multi-stop gradient, and four
+// Step 4b: 16 noise types with shaping, scroll and warp, a multi-stop gradient, and four
 // output modes (gradient, greyscale, normal map, planar relief).
 class NoiseLab : public CFFGLPlugin
 {
@@ -22,7 +22,7 @@ public:
 	static const int MAX_OCTAVES = 8;
 	static const int MAX_STOPS   = 6;
 	static const int STOP_SLOTS  = MAX_STOPS + 2;// room for the two extra stops Gradient Loop: Wrap adds
-	static const int NUM_PARAMS  = 67;
+	static const int NUM_PARAMS  = 71;
 
 private:
 	struct Vec2d
@@ -51,11 +51,17 @@ private:
 	ffglex::FFGLShader shader;  //!< Compiles and links the noise shader.
 	ffglex::FFGLScreenQuad quad;//!< Full screen quad the shader is drawn on.
 
+	// Reduced Quality: the noise is drawn into this smaller buffer, then stretched to the output.
+	ffglex::FFGLFBO lowRes;
+	bool lowResFailed = false;
+	ffglex::FFGLShader blitShader;
+	GLint blitImageLocation = -1;
+
 	// Uniform locations, looked up once in InitGL so the render call does no string work.
 	struct Locations
 	{
 		GLint aspect = -1, row0 = -1, row1 = -1;
-		GLint octaves = -1, gain = -1, octRow0 = -1, octRow1 = -1, octCell = -1, octFrac = -1;
+		GLint octaves = -1, gain = -1, octRow0 = -1, octRow1 = -1, octCell = -1, octFrac = -1, octFade = -1;
 		GLint evolve = -1, period = -1, seed = -1, type = -1;
 		GLint warp = -1, warpScale = -1, warpCell = -1, warpFrac = -1, warpEvolve = -1, gradLoop = -1;
 		GLint lowClip = -1, clipRange = -1, contrast = -1, cycles = -1, absolute = -1, invert = -1;

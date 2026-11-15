@@ -53,8 +53,12 @@ enum ParamID : FFUInt32
 	PT_GRAD_LOOP,
 	PT_STOP_FIRST,// each stop is five parameters, see StopField
 	PT_STOP_END = PT_STOP_FIRST + NoiseLab::MAX_STOPS * 5,
-	// Performance
-	PT_SLOPE_QUALITY = PT_STOP_END,
+	// Settings
+	PT_SMOOTHING = PT_STOP_END,
+	PT_ANTIALIAS,
+	PT_QUALITY,
+	PT_UPSCALE,
+	PT_SLOPE_QUALITY,
 
 	PT_COUNT
 };
@@ -92,6 +96,44 @@ enum NoiseType
 	NT_VORONOI3     = 13,
 	NT_CELL_VORONOI = 14,
 	NT_DISP_VORONOI = 15,
+	// Lookalikes of Cinema 4D's unusual types
+	NT_BLISTERED = 16,
+	NT_BUYA      = 17,
+	NT_CRANAL    = 18,
+	NT_DENTS     = 19,
+	NT_HAMA      = 20,
+	NT_LUKA      = 21,
+	NT_NAKI      = 22,
+	NT_NUTOUS    = 23,
+	NT_OBER      = 24,
+	NT_PEZO      = 25,
+	NT_POXO      = 26,
+	NT_SEMA      = 27,
+	NT_STUPL     = 28,
+	NT_ZADA      = 29,
+	NT_ELECTRIC  = 30,
+	NT_FIRE      = 31,
+	NT_GASEOUS   = 32,
+	NT_SPARSE    = 33,
+	// NoiseLab originals
+	NT_HONEYCOMB    = 34,
+	NT_TRUCHET      = 35,
+	NT_MAZE         = 36,
+	NT_RIPPLES      = 37,
+	NT_DIAMOND      = 38,
+	NT_SQUARE       = 39,
+	NT_CAUSTICS     = 40,
+	NT_SHARDS       = 41,
+	NT_BLOBS        = 42,
+	NT_GYROID       = 43,
+	NT_INTERFERENCE = 44,
+	NT_GLITCH       = 45,
+	NT_MONDRIAN     = 46,
+	NT_POLKA        = 47,
+	NT_STARFIELD    = 48,
+	NT_WEAVE        = 49,
+	NT_SCALES       = 50,
+	NT_BRICKS       = 51,
 };
 struct TypeEntry
 {
@@ -113,12 +155,52 @@ static const TypeEntry TYPE_LIST[] = {
 	{ "Ridged", NT_RIDGED, false },
 	{ "Displaced Turb", NT_DISP_TURB, false },
 	{ "Wavy Turbulence", NT_WAVY_TURB, false },
+	{ "Blistered Turb", NT_BLISTERED, false },
 
 	{ "Voronoi 1", NT_VORONOI1, true },
 	{ "Voronoi 2", NT_VORONOI2, false },
 	{ "Voronoi 3", NT_VORONOI3, false },
 	{ "Cell Voronoi", NT_CELL_VORONOI, false },
 	{ "Displaced Voronoi", NT_DISP_VORONOI, false },
+
+	{ "Buya", NT_BUYA, true },
+	{ "Cranal", NT_CRANAL, false },
+	{ "Dents", NT_DENTS, false },
+	{ "Hama", NT_HAMA, false },
+	{ "Luka", NT_LUKA, false },
+	{ "Naki", NT_NAKI, false },
+	{ "Nutous", NT_NUTOUS, false },
+	{ "Ober", NT_OBER, false },
+	{ "Pezo", NT_PEZO, false },
+	{ "Poxo", NT_POXO, false },
+	{ "Sema", NT_SEMA, false },
+	{ "Stupl", NT_STUPL, false },
+	{ "Zada", NT_ZADA, false },
+
+	{ "Electric", NT_ELECTRIC, true },
+	{ "Fire", NT_FIRE, false },
+	{ "Gaseous", NT_GASEOUS, false },
+	{ "Sparse Convolution", NT_SPARSE, false },
+
+	{ "Caustics", NT_CAUSTICS, true },
+	{ "Shards", NT_SHARDS, false },
+	{ "Diamond Cells", NT_DIAMOND, false },
+	{ "Square Cells", NT_SQUARE, false },
+	{ "Ripples", NT_RIPPLES, false },
+	{ "Starfield", NT_STARFIELD, false },
+	{ "Blobs", NT_BLOBS, false },
+
+	{ "Honeycomb", NT_HONEYCOMB, true },
+	{ "Truchet", NT_TRUCHET, false },
+	{ "Maze", NT_MAZE, false },
+	{ "Mondrian", NT_MONDRIAN, false },
+	{ "Glitch Bars", NT_GLITCH, false },
+	{ "Polka", NT_POLKA, false },
+	{ "Weave", NT_WEAVE, false },
+	{ "Scales", NT_SCALES, false },
+	{ "Bricks", NT_BRICKS, false },
+	{ "Gyroid", NT_GYROID, false },
+	{ "Interference", NT_INTERFERENCE, false },
 };
 static const unsigned int TYPE_COUNT = sizeof( TYPE_LIST ) / sizeof( TYPE_LIST[ 0 ] );
 
@@ -141,8 +223,8 @@ static float ScaleFromSlider( float v )
 {
 	return SCALE_MIN * std::pow( SCALE_MAX / SCALE_MIN, v );
 }
-// Warp Scale: 0..1 -> 0.05x..16x, exponential.
-static const float WARP_SCALE_MIN = 0.05f, WARP_SCALE_MAX = 16.0f;
+// Warp Scale: 0..1 -> 0.05x..64x, exponential.
+static const float WARP_SCALE_MIN = 0.05f, WARP_SCALE_MAX = 64.0f;
 static float WarpScaleFromSlider( float v )
 {
 	return WARP_SCALE_MIN * std::pow( WARP_SCALE_MAX / WARP_SCALE_MIN, v );
@@ -256,6 +338,10 @@ static void FillDefaults( float* d )
 		for( int f = 0; f < 5; ++f )
 			d[ PT_STOP_FIRST + s * 5 + f ] = stopDefaults[ s ][ f ];
 
+	d[ PT_SMOOTHING ]     = 1.0f;// on
+	d[ PT_ANTIALIAS ]     = 1.0f;// on
+	d[ PT_QUALITY ]       = 0.0f;// Full
+	d[ PT_UPSCALE ]       = 0.0f;// Smooth
 	d[ PT_SLOPE_QUALITY ] = 0.0f;// Fast
 }
 
@@ -322,10 +408,10 @@ static CFFGLPluginInfo PluginInfo(
 	2,                                  // API major version number
 	1,                                  // API minor version number
 	0,                                  // Plugin major version number
-	7,                                  // Plugin minor version number
+	9,                                  // Plugin minor version number
 	FF_SOURCE,                          // Plugin type
 	"Procedural noise generator",       // Plugin description
-	"NoiseLab step 4a.3: octave twist and drift"// About
+	"NoiseLab step 4b: 52 noise types"        // About
 );
 
 static const char vertexShaderCode[] = R"(#version 410 core
@@ -354,6 +440,7 @@ uniform vec2 uOctRow0[ 8 ];  // rows of each octave's 2x2 matrix: its frequency 
 uniform vec2 uOctRow1[ 8 ];  // combined with its rotation (Octave Twist x octave number)
 uniform ivec2 uOctCell[ 8 ]; // scroll position of each octave: whole lattice cells...
 uniform vec2 uOctFrac[ 8 ];  // ...and the fraction inside the cell
+uniform float uOctFade[ 8 ]; // anti-alias: 1 = full strength, 0 = octave is finer than a pixel and left out
 
 // --- Motion ---
 uniform float uEvolve;       // position on the evolution axis
@@ -525,10 +612,11 @@ float latticeNoise( vec3 p, ivec2 cell, int periodZ, uint seed, float edge )
 // adjacent literals, which the compiler joins into one string.
 R"(// Voronoi (cellular) noise. Returns the distance to the nearest feature point, the distance to
 // the second nearest, and a random 0..1 id for the nearest one.
+//  metric  how distance is measured, which sets the cell shape (see inside)
 // The points are scattered through 3D space and the picture is a slice through it at height z,
 // so as z advances cells grow, shrink, appear and vanish at a steady rate. Wrapping the z cell
 // index keeps looping exact.
-vec3 voronoi( vec3 p, ivec2 cell, int periodZ, uint seed )
+vec3 voronoi( vec3 p, ivec2 cell, int periodZ, uint seed, int metric )
 {
 	vec3 pf = floor( p );
 	vec3 f  = p - pf;
@@ -549,7 +637,9 @@ vec3 voronoi( vec3 p, ivec2 cell, int periodZ, uint seed )
 				uint h = hash3( ivec3( i + ivec2( x, y ), cz ), seed );
 				vec3 o = vec3( float( h & 1023u ), float( ( h >> 10u ) & 1023u ), float( ( h >> 20u ) & 1023u ) ) / 1023.0;
 				vec3 d = vec3( float( x ), float( y ), float( z ) ) + o - f;
-				float dist = dot( d, d );
+				// 0 = straight-line distance (round cells), 1 = Manhattan (diamonds), 2 = Chebyshev (squares)
+				vec3 ad = abs( d );
+				float dist = metric == 0 ? dot( d, d ) : ( metric == 1 ? ad.x + ad.y + ad.z : max( ad.x, max( ad.y, ad.z ) ) );
 				if( dist < d1 )
 				{
 					d2 = d1;
@@ -563,7 +653,12 @@ vec3 voronoi( vec3 p, ivec2 cell, int periodZ, uint seed )
 			}
 		}
 	}
-	return vec3( sqrt( d1 ), sqrt( d2 ), float( pcg( id ) >> 8u ) / 16777215.0 );
+	if( metric == 0 )
+	{
+		d1 = sqrt( d1 );
+		d2 = sqrt( d2 );
+	}
+	return vec3( d1, d2, float( pcg( id ) >> 8u ) / 16777215.0 );
 }
 
 // Two unrelated noise values, used to push a position around inside a type.
@@ -594,10 +689,349 @@ float STD( float raw, vec2 cal )
 #define CAL_CELL_VORONOI vec2( 0.5, 1.15 )
 #define CAL_DISP_VORONOI vec2( 0.512, 1.6 )
 
-// One octave of the selected noise type, standardised as described above.
+// Gradient noise sampled at k times the xy frequency (k whole, so the lattice still lines up
+// when scrolling). Used for the finer layers inside the composite types below.
+float pn( vec3 q, ivec2 cell, int period, uint seed, int k )
+{
+	return pnoise( vec3( q.xy * float( k ), q.z ), cell * k, period, seed );
+}
+
+// Sum of soft round kernels, one at a random spot in each cell, each with a strength that drifts
+// over time. signedMix 1 = strengths from -1 to 1 (sparse convolution noise), 0 = all positive.
+float kernelSum( vec3 p, ivec2 cell, int periodZ, uint seed, float signedMix )
+{
+	vec2 pf = floor( p.xy );
+	vec2 f  = p.xy - pf;
+	ivec2 i = ivec2( pf ) + cell;
+	float sum = 0.0;
+	for( int y = -1; y <= 1; ++y )
+	{
+		for( int x = -1; x <= 1; ++x )
+		{
+			ivec2 c = i + ivec2( x, y );
+			uint h  = hash3( ivec3( c, 0 ), seed + 91u );
+			vec2 o  = vec2( float( h & 65535u ), float( h >> 16u ) ) / 65535.0;
+			vec2 d  = vec2( float( x ), float( y ) ) + o - f;
+			float w = valueColumn( c, p.z, periodZ, seed + 92u );
+			sum += mix( 0.5 + 0.5 * w, w, signedMix ) * exp( -dot( d, d ) * 6.0 );
+		}
+	}
+	return sum;
+}
+
+// The types below are designed directly as a 0..1 picture, so their calibration maps a single
+// octave straight through unchanged.
+#define CAL_UNIT vec2( 0.5, 1.6667 )
+
+)"
+R"(// Lookalikes of Cinema 4D's more unusual noises (types 16 to 33). Built by eye from reference
+// renders; C4D's own algorithms are not public.
+float signalC4D( vec3 q, ivec2 cell, int period, uint seed )
+{
+	float n1 = pnoise( q, cell, period, seed );
+
+	if( uType == 16 )// Blistered Turbulence: soft cloud with fine grit
+		return STD( n1 + 0.28 * pn( vec3( q.xy, q.z * 2.0 ), cell, period * 2, seed + 41u, 8 ), vec2( 0.0, 0.8 ) );
+
+	if( uType == 17 )// Buya: black, with sparse fuzzy speckled clumps
+	{
+		float clump = smoothstep( 0.0, 0.65, 0.35 * n1 + pn( q, cell, period, seed + 3u, 2 ) + 0.5 * pn( q, cell, period, seed + 6u, 4 ) );
+		float speck = 0.5 + 0.5 * pn( q, cell, period, seed + 4u, 16 );
+		float fuzz  = 0.5 + 0.5 * pn( q, cell, period, seed + 5u, 8 );
+		return STD( clump * ( 0.12 + 1.7 * speck * speck * fuzz ), CAL_UNIT );
+	}
+
+	if( uType == 19 )// Dents: bold soft blobs out of black
+		return STD( pow( smoothstep( -0.35, 0.6, n1 + 0.45 * pn( q, cell, period, seed + 3u, 2 ) ), 1.5 ), CAL_UNIT );
+
+	if( uType == 21 )// Luka: rough eroded rock
+	{
+		vec2 push  = noise2( vec3( q.xy * 2.0, q.z ), cell * 2, period, seed );
+		float a    = pnoise( q + vec3( push * 0.3, 0.0 ), cell, period, seed );
+		float ridge = 1.0 - abs( pn( q, cell, period, seed + 3u, 4 ) );
+		float raw  = 0.42 + 0.5 * a + 0.34 * ( ridge * ridge - 0.5 ) * ( 0.7 + 0.5 * a )
+		           + 0.14 * pn( q, cell, period, seed + 4u, 8 ) + 0.07 * pn( q, cell, period, seed + 5u, 16 );
+		return STD( raw, CAL_UNIT );
+	}
+
+	if( uType == 25 )// Pezo: black, sparse bright streaky clusters, faint grain
+	{
+		float clusters = smoothstep( 0.28, 0.7, n1 + 0.6 * pn( q, cell, period, seed + 3u, 4 ) );
+		float grain    = 0.5 + 0.5 * pn( q, cell, period, seed + 4u, 16 );
+		return STD( 0.07 * grain + clusters * ( 0.4 + 0.8 * grain ), CAL_UNIT );
+	}
+
+	if( uType == 26 )// Poxo: very dark fine speckle with faint larger blotches
+	{
+		float dots = pow( clamp( 0.5 + 1.1 * pn( q, cell, period, seed + 3u, 16 ), 0.0, 1.0 ), 2.0 )
+		           * ( 0.6 + 0.4 * pn( q, cell, period, seed + 5u, 32 ) );
+		float blot = clamp( 0.5 + 0.8 * pn( q, cell, period, seed + 4u, 2 ), 0.0, 1.0 );
+		return STD( 0.05 + dots * ( 0.1 + 0.3 * blot * blot ), CAL_UNIT );
+	}
+
+	if( uType == 28 )// Stupl: flowing lava folds (noise warped twice)
+	{
+		vec3 p1 = q + vec3( noise2( q, cell, period, seed ) * 0.8, 0.0 );
+		vec3 p2 = p1 + vec3( noise2( vec3( p1.xy * 2.0, p1.z ), cell * 2, period, seed + 5u ) * 0.45, 0.0 );
+		float fold = pnoise( p2, cell, period, seed + 6u );
+		float raw  = 0.5 + 0.6 * fold + 0.16 * pn( p2, cell, period, seed + 7u, 2 ) - 0.2 * pow( 1.0 - abs( fold ), 8.0 );
+		return STD( raw, CAL_UNIT );
+	}
+
+	if( uType == 30 )// Electric: thin bright jagged arcs on black
+	{
+		float e = abs( n1 + 0.5 * pn( q, cell, period, seed + 3u, 2 ) + 0.25 * pn( q, cell, period, seed + 4u, 4 ) + 0.12 * pn( q, cell, period, seed + 5u, 8 ) );
+		return STD( pow( clamp( 1.0 - e * 4.0, 0.0, 1.0 ), 5.0 ) + 0.12 * clamp( 1.0 - e * 1.5, 0.0, 1.0 ), CAL_UNIT );
+	}
+
+	if( uType == 31 )// Fire: tall flickering tongues (turbulence squeezed sideways)
+	{
+		float turb = abs( pnoise( vec3( q.x * 2.0, q.y, q.z ), ivec2( cell.x * 2, cell.y ), period, seed ) )
+		           + 0.5 * abs( pnoise( vec3( q.x * 4.0, q.y * 2.0, q.z * 2.0 ), ivec2( cell.x * 4, cell.y * 2 ), period * 2, seed + 1u ) )
+		           + 0.25 * abs( pnoise( vec3( q.x * 8.0, q.y * 4.0, q.z * 2.0 ), ivec2( cell.x * 8, cell.y * 4 ), period * 2, seed + 2u ) );
+		return STD( pow( clamp( 1.0 - turb * 1.25, 0.0, 1.0 ), 2.2 ), CAL_UNIT );
+	}
+
+	if( uType == 32 )// Gaseous: soft billowing puffs
+	{
+		float billow = abs( pnoise( q + vec3( noise2( q, cell, period, seed ) * 0.5, 0.0 ), cell, period, seed + 1u ) );
+		return STD( 0.8 * pow( billow * 1.6, 0.6 ) + 0.15 * ( 0.5 + 0.5 * pn( q, cell, period, seed + 3u, 4 ) ), CAL_UNIT );
+	}
+
+	if( uType == 33 )// Sparse Convolution: smooth noise built from scattered soft kernels
+		return STD( 0.5 + 0.7 * kernelSum( q, cell, period, seed, 1.0 ), CAL_UNIT );
+
+	// The rest draw thin lines where noise fields cross zero.
+	float n2 = pnoise( q + vec3( 0.31, 0.67, 0.0 ), cell, period, seed + 1u );
+	float n3 = pnoise( q + vec3( 0.73, 0.19, 0.0 ), cell, period, seed + 8u );
+	float d  = min( abs( n1 ), min( abs( n2 ), abs( n3 ) ) );
+
+	if( uType == 18 )// Cranal: thin dark looping lines over soft grey
+	{
+		float soft = pnoise( q, cell, period, seed + 2u );
+		return STD( ( 0.55 + 0.25 * soft ) * mix( 0.3, 1.0, smoothstep( 0.0, 0.03, d ) ), CAL_UNIT );
+	}
+
+	if( uType == 20 )// Hama: dark creased lobes with the odd bright spot
+	{
+		float glow = pow( clamp( 0.5 + 0.9 * pnoise( q, cell, period, seed + 2u ), 0.0, 1.0 ), 4.0 );
+		return STD( smoothstep( 0.0, 0.045, d ) * ( 0.03 + 0.3 * exp( -d * 16.0 ) + 0.9 * glow * glow ), CAL_UNIT );
+	}
+
+	if( uType == 27 )// Sema: bright thin loops on black, glowing where they cross
+	{
+		float knot = exp( -( n1 * n1 + n2 * n2 ) * 90.0 ) + exp( -( n2 * n2 + n3 * n3 ) * 90.0 ) + exp( -( n1 * n1 + n3 * n3 ) * 90.0 );
+		return STD( clamp( 1.0 - smoothstep( 0.0, 0.028, d ) + 0.45 * knot, 0.0, 1.0 ), CAL_UNIT );
+	}
+
+	if( uType == 24 )// Ober: bright wavy streaks cut by thin black lines
+	{
+		float streak = pow( 1.0 - abs( pnoise( q + vec3( noise2( q, cell, period, seed ) * 0.4, 0.0 ), cell, period, seed + 2u ) ), 6.0 );
+		float body   = 0.16 + 0.26 * ( 0.5 + 0.5 * pn( q, cell, period, seed + 5u, 2 ) ) + 0.6 * streak;
+		return STD( smoothstep( 0.0, 0.035, min( abs( n1 ), abs( n3 ) ) ) * body, CAL_UNIT );
+	}
+
+	if( uType == 29 )// Zada: flowing contour lines, like marbled paper
+	{
+		float a    = pnoise( q + vec3( noise2( q, cell, period, seed ) * 1.1, 0.0 ), cell, period, seed + 2u );
+		float band = 0.5 + 0.5 * cos( a * 30.0 );
+		float spot = pow( clamp( 0.5 + 0.9 * pnoise( q, cell, period, seed + 7u ), 0.0, 1.0 ), 6.0 );
+		return STD( ( 0.55 + 0.2 * n1 ) * mix( 0.5, 1.05, band ) + 0.3 * spot, CAL_UNIT );
+	}
+
+	// 22 Naki and 23 Nutous: blobs outlined by rough fractal borders
+	float rough  = pn( q, cell, period, seed + 3u, 4 ) + 0.5 * pn( q, cell, period, seed + 4u, 8 ) + 0.25 * pn( q, cell, period, seed + 9u, 16 );
+	float border = smoothstep( 0.03, 0.24, abs( n1 + 0.16 * rough ) );
+	if( uType == 22 )
+		return STD( mix( 0.24 + 0.14 * rough, 0.62 + 0.2 * pn( q, cell, period, seed + 5u, 2 ), border ), CAL_UNIT );
+	float bright = pow( clamp( 0.5 + 0.9 * n2, 0.0, 1.0 ), 3.0 );
+	return STD( border * ( 0.1 + 0.75 * bright ) + 0.06 + 0.07 * rough, CAL_UNIT );
+}
+
+)"
+R"(// Original NoiseLab types (34 and up): tilings, mazes, waves and Voronoi experiments. All are
+// built on the same lattice as the noise, so they scroll, loop, warp and layer like any other.
+float signalBonus( vec3 q, ivec2 cell, int period, uint seed )
+{
+	vec2 pf = floor( q.xy );
+	vec2 f  = q.xy - pf;
+	ivec2 i = ivec2( pf ) + cell;
+
+	if( uType == 34 )// Honeycomb: hexagons, each with its own slowly changing tone
+	{
+		// 5 hexagons across and 3 up per cell: the nearest whole numbers to a regular hexagon's
+		// proportions, which is what lets the tiling line up with the lattice.
+		const vec2 HEX = vec2( 1.0, 1.7320508 );
+		vec2 hp = vec2( q.x * 5.0, q.y * 3.0 * 1.7320508 );
+		vec2 a  = mod( hp, HEX ) - HEX * 0.5;
+		vec2 b  = mod( hp - HEX * 0.5, HEX ) - HEX * 0.5;
+		vec2 g  = dot( a, a ) < dot( b, b ) ? a : b;
+		ivec2 id = ivec2( floor( ( hp - g ) / ( HEX * 0.5 ) + 0.5 ) ) + ivec2( cell.x * 10, cell.y * 6 );
+		float edge = 0.5 - max( abs( g.x ), dot( abs( g ), vec2( 0.5, 0.8660254 ) ) );
+		float tone = 0.5 + 0.5 * valueColumn( id, q.z, period, seed );
+		return STD( tone * smoothstep( 0.0, 0.06, edge ) * ( 0.7 + 0.6 * edge ), CAL_UNIT );
+	}
+
+	if( uType == 35 || uType == 36 )// Truchet (curved pipes) and Maze (diagonal walls)
+	{
+		// Each cell holds one of two tiles; over time a cell cross-fades to the other one.
+		float flip = smoothstep( -0.08, 0.08, valueColumn( i, q.z, period, seed ) );
+		if( uType == 35 )
+		{
+			float dA = min( abs( length( f ) - 0.5 ), abs( length( f - 1.0 ) - 0.5 ) );
+			float dB = min( abs( length( f - vec2( 1.0, 0.0 ) ) - 0.5 ), abs( length( f - vec2( 0.0, 1.0 ) ) - 0.5 ) );
+			return STD( sqrt( clamp( 1.0 - mix( dA, dB, flip ) / 0.16, 0.0, 1.0 ) ), CAL_UNIT );
+		}
+		float dA = abs( f.x - f.y ) * 0.7071;
+		float dB = abs( f.x + f.y - 1.0 ) * 0.7071;
+		return STD( 1.0 - smoothstep( 0.08, 0.11, mix( dA, dB, flip ) ), CAL_UNIT );
+	}
+
+	if( uType == 43 )// Gyroid: a slice through a triply periodic minimal surface, slightly stirred
+	{
+		vec3 a  = 6.2831853 * vec3( q.xy + noise2( q, cell, period, seed ) * 0.12, q.z );
+		float g = sin( a.x ) * cos( a.y ) + sin( a.y ) * cos( a.z ) + sin( a.z ) * cos( a.x );
+		return STD( mix( 0.5 + 0.3 * g, 1.0 - smoothstep( 0.0, 0.35, abs( g ) ), 0.7 ), CAL_UNIT );
+	}
+
+	if( uType == 44 )// Interference: five plane waves with whole-number directions, beating together
+	{
+		float sum = 0.0;
+		for( int k = 0; k < 5; ++k )
+		{
+			uint h = pcg( seed + uint( k ) * 977u + 5u );
+			ivec2 dir = ivec2( int( h & 7u ) - 3, int( ( h >> 3u ) & 7u ) - 3 );
+			if( dir == ivec2( 0 ) )
+				dir = ivec2( 1, 2 );
+			float drift = float( int( ( h >> 6u ) & 3u ) - 1 );
+			sum += sin( 6.2831853 * ( dot( vec2( dir ), q.xy ) + drift * q.z ) + float( h >> 16u ) * 0.0000959 );
+		}
+		return STD( 0.5 + 0.18 * sum, CAL_UNIT );
+	}
+
+	if( uType == 45 )// Glitch Bars: rows of flat blocks, each row cut into 1, 2, 4 or 8 pieces
+	{
+		int row   = int( floor( q.y * 4.0 ) ) + cell.y * 4;
+		int count = 1 << int( pcg( uint( row ) + seed * 3u + 17u ) & 3u );
+		int col   = int( floor( q.x * float( count ) ) ) + cell.x * count;
+		return STD( 0.5 + 0.5 * valueColumn( ivec2( col, row ), q.z, period, seed + uint( count ) ), CAL_UNIT );
+	}
+
+	if( uType == 46 )// Mondrian: squares randomly split into quarters up to three times
+	{
+		ivec2 c = i;
+		float size = 1.0;
+		int level = 0;
+		for( int l = 0; l < 3; ++l )
+		{
+			if( ( hash3( ivec3( c, l ), seed + 60u ) & 255u ) > 150u )
+				break;
+			f *= 2.0;
+			ivec2 s = min( ivec2( floor( f ) ), ivec2( 1 ) );
+			c = c * 2 + s;
+			f -= vec2( s );
+			size *= 0.5;
+			level = l + 1;
+		}
+		float edge = min( min( f.x, 1.0 - f.x ), min( f.y, 1.0 - f.y ) ) * size;
+		float tone = 0.5 + 0.5 * valueColumn( c, q.z, period, seed + 70u + uint( level ) );
+		return STD( tone * smoothstep( 0.012, 0.02, edge ), CAL_UNIT );
+	}
+
+	if( uType == 47 )// Polka: a domed dot per cell whose size breathes
+	{
+		float radius = 0.18 + 0.27 * ( 0.5 + 0.5 * valueColumn( i, q.z, period, seed ) );
+		return STD( sqrt( clamp( 1.0 - length( f - 0.5 ) / radius, 0.0, 1.0 ) ), CAL_UNIT );
+	}
+
+	if( uType == 49 )// Weave: basket weave, strands passing over and under
+	{
+		bool over  = ( ( i.x + i.y ) & 1 ) == 0;
+		float across = step( abs( f.y - 0.5 ), 0.38 ) * sqrt( sin( 3.14159265 * f.y ) ) * ( over ? 1.0 : 0.45 + 0.5 * abs( 2.0 * f.x - 1.0 ) );
+		float up     = step( abs( f.x - 0.5 ), 0.38 ) * sqrt( sin( 3.14159265 * f.x ) ) * ( over ? 0.45 + 0.5 * abs( 2.0 * f.y - 1.0 ) : 1.0 );
+		float top    = over ? ( across > 0.0 ? across : up ) : ( up > 0.0 ? up : across );
+		return STD( top * ( 0.85 + 0.15 * valueColumn( i, q.z, period, seed ) ), CAL_UNIT );
+	}
+
+	if( uType == 50 )// Scales: overlapping rounded scales in offset rows
+	{
+		int rowBase = int( floor( q.y * 2.0 ) );
+		float raw = 0.0;
+		// The row above overlaps the row below, so test it first.
+		for( int r = 1; r >= 0; --r )
+		{
+			int row      = rowBase + r;
+			int rowGlobal = row + cell.y * 2;
+			float shift  = 0.5 * float( rowGlobal & 1 );
+			float colF   = floor( q.x - shift );
+			vec2 centre  = vec2( colF + 0.5 + shift, float( row ) * 0.5 );
+			float dist   = length( q.xy - centre ) / 0.62;
+			if( dist < 1.0 )
+			{
+				float tone = 0.75 + 0.25 * valueColumn( ivec2( int( colF ) + cell.x, rowGlobal ), q.z, period, seed );
+				raw = tone * ( 0.25 + 0.75 * sqrt( 1.0 - dist ) ) * smoothstep( 1.0, 0.93, dist );
+				break;
+			}
+		}
+		return STD( raw, CAL_UNIT );
+	}
+
+	if( uType == 51 )// Bricks: running bond, each brick its own tone
+	{
+		int row     = int( floor( q.y * 2.0 ) ) + cell.y * 2;
+		float along = q.x + 0.5 * float( row & 1 );
+		float fx    = fract( along );
+		float fy    = fract( q.y * 2.0 );
+		float mortar = smoothstep( 0.0, 0.04, min( fx, 1.0 - fx ) ) * smoothstep( 0.0, 0.08, min( fy, 1.0 - fy ) );
+		float tone  = 0.55 + 0.3 * valueColumn( ivec2( int( floor( along ) ) + cell.x, row ), q.z, period, seed );
+		return STD( 0.08 + tone * mortar, CAL_UNIT );
+	}
+
+	if( uType == 42 )// Blobs: soft kernels that merge like a lava lamp
+	{
+		float field = kernelSum( q, cell, period, seed, 0.0 );
+		return STD( smoothstep( 0.42, 0.5, field ) * ( 0.55 + 0.45 * smoothstep( 0.5, 1.1, field ) ), CAL_UNIT );
+	}
+
+	if( uType == 38 )// Diamond Cells: Voronoi measured in Manhattan distance, as pyramids
+		return STD( 1.0 - voronoi( q, cell, period, seed, 1 ).x * 0.85, CAL_UNIT );
+
+	if( uType == 39 )// Square Cells: Voronoi measured in Chebyshev distance, bright cells with dark seams
+	{
+		vec3 c = voronoi( q, cell, period, seed, 2 );
+		return STD( clamp( ( c.y - c.x ) * 1.6, 0.0, 1.0 ), CAL_UNIT );
+	}
+
+	vec3 c = voronoi( q, cell, period, seed, 0 );
+
+	if( uType == 37 )// Ripples: rings spreading out from the Voronoi points
+		return STD( 0.5 + 0.5 * sin( 6.2831853 * ( c.x * 5.0 - q.z * 2.0 ) ) * ( 1.0 - 0.7 * smoothstep( 0.2, 0.9, c.x ) ), CAL_UNIT );
+
+	if( uType == 40 )// Caustics: two overlapping networks of bright cell borders, like light through water
+	{
+		vec3 c2  = voronoi( q + vec3( 0.5, 0.5, 0.37 ), cell, period, seed + 9u, 0 );
+		float l1 = pow( 1.0 - clamp( ( c.y - c.x ) * 1.8, 0.0, 1.0 ), 5.0 );
+		float l2 = pow( 1.0 - clamp( ( c2.y - c2.x ) * 1.8, 0.0, 1.0 ), 5.0 );
+		return STD( clamp( 0.06 + 0.7 * l1 + 0.5 * l2, 0.0, 1.0 ), CAL_UNIT );
+	}
+
+	if( uType == 41 )// Shards: each cell a faceted cone in its own tone
+		return STD( fract( c.z * 5.0 ) * 0.45 + 0.55 * clamp( 1.0 - c.x * 1.2, 0.0, 1.0 ) * ( 0.4 + 0.6 * c.z ), CAL_UNIT );
+
+	// 48 Starfield: points of light that fade in and out as the slice passes them
+	return STD( pow( clamp( 1.0 - c.x * 1.4, 0.0, 1.0 ), 5.0 ) * ( 0.4 + 0.6 * c.z ), CAL_UNIT );
+}
+
+)"
+R"(// One octave of the selected noise type, standardised as described above.
 //  carry  state passed from octave to octave (the ridged type uses it so detail gathers on ridges)
 float octaveSignal( vec3 q, ivec2 cell, int period, uint seed, inout float carry )
 {
+	if( uType >= 34 )
+		return signalBonus( q, cell, period, seed );
+	if( uType >= 16 )
+		return signalC4D( q, cell, period, seed );
+
 	// 0 Noise and 1 FBM: plain gradient noise. (Noise is forced to a single octave by the caller.)
 	if( uType <= 1 )
 		return pnoise( q, cell, period, seed );
@@ -654,16 +1088,16 @@ float octaveSignal( vec3 q, ivec2 cell, int period, uint seed, inout float carry
 	}
 
 	if( uType == 14 )// Cell Voronoi: each cell a flat random grey
-		return STD( voronoi( q, cell, period, seed ).z, CAL_CELL_VORONOI );
+		return STD( voronoi( q, cell, period, seed, 0 ).z, CAL_CELL_VORONOI );
 
 	if( uType == 15 )// Displaced Voronoi: Voronoi 1 with its edges roughened by finer noise
 	{
 		vec2 push = noise2( vec3( q.xy * 4.0, q.z ), cell * 4, period, seed ) * 0.5
 		          + noise2( vec3( q.xy * 8.0, q.z ), cell * 8, period, seed + 3u ) * 0.25;
-		return STD( voronoi( q + vec3( push * 0.3, 0.0 ), cell, period, seed ).x, CAL_DISP_VORONOI );
+		return STD( voronoi( q + vec3( push * 0.3, 0.0 ), cell, period, seed, 0 ).x, CAL_DISP_VORONOI );
 	}
 
-	vec3 cells = voronoi( q, cell, period, seed );
+	vec3 cells = voronoi( q, cell, period, seed, 0 );
 	if( uType == 11 )// Voronoi 1: distance to the nearest point (dark centres, bright borders)
 		return STD( cells.x, CAL_VORONOI1 );
 	if( uType == 12 )// Voronoi 2: distance to the second nearest point (overlapping facets)
@@ -688,15 +1122,19 @@ float fractal( vec2 p, float octaves, uint seed )
 		float weight = clamp( octaves - float( i ), 0.0, 1.0 );
 		if( weight <= 0.0 )
 			break;
-		float a = weight * amp;
-		vec3 q  = vec3( vec2( dot( uOctRow0[ i ], p ), dot( uOctRow1[ i ], p ) ) + uOctFrac[ i ], uEvolve * zMul );
-		sum   += a * octaveSignal( q, uOctCell[ i ], period, seed + uint( i ) * 31u, carry );
-		power += a * a;
+		float a = weight * amp * uOctFade[ i ];
+		if( a > 0.0 )// a faded-out octave costs nothing
+		{
+			vec3 q = vec3( vec2( dot( uOctRow0[ i ], p ), dot( uOctRow1[ i ], p ) ) + uOctFrac[ i ], uEvolve * zMul );
+			sum   += a * octaveSignal( q, uOctCell[ i ], period, seed + uint( i ) * 31u, carry );
+			power += a * a;
+		}
 		amp    *= uGain;
 		zMul   *= 2.0;
 		period *= 2;
 	}
-	return sum / sqrt( power );
+	// If every octave has faded out (or Gain is 0 and the first has), the result is flat mid grey.
+	return sum / sqrt( max( power, 0.000001 ) );
 }
 
 // Output shaping, in Cinema 4D's order: absolute, cycles, clips, contrast, then invert.
@@ -718,8 +1156,7 @@ float shape( float v )
 	return v;
 }
 
-)"
-R"(// The finished 0..1 noise value at a screen position. Everything (warp, fractal, shaping) is in
+// The finished 0..1 noise value at a screen position. Everything (warp, fractal, shaping) is in
 // here so the relief modes can sample neighbouring positions.
 float heightAt( vec2 s )
 {
@@ -783,7 +1220,8 @@ vec4 gradient( float v )
 	return c;
 }
 
-void main()
+)"
+R"(void main()
 {
 	// Centre the pattern and correct for aspect so cells stay square at any output size.
 	vec2 s = ( uv - 0.5 ) * vec2( uAspect, 1.0 );
@@ -839,6 +1277,19 @@ void main()
 		alpha *= v;
 	// FFGL plugins must output premultiplied colour.
 	fragColor = vec4( clamp( col.rgb, 0.0, 1.0 ) * alpha, alpha );
+}
+)";
+
+// Second pass for the reduced Quality settings: stretch the low resolution render to the output.
+static const char blitFragmentShaderCode[] = R"(#version 410 core
+uniform sampler2D uImage;
+
+in vec2 uv;
+out vec4 fragColor;
+
+void main()
+{
+	fragColor = texture( uImage, uv );
 }
 )";
 
@@ -1018,11 +1469,28 @@ NoiseLab::NoiseLab()
 			SetParamGroup( PT_STOP_FIRST + s * 5 + f, "Gradient" );
 	}
 
-	// --- Performance ---
+	// --- Settings ---
+	SetParamInfo( PT_SMOOTHING, "Smoothing", FF_TYPE_BOOLEAN, true );
+	SetParamGroup( PT_SMOOTHING, "Settings" );
+
+	SetParamInfo( PT_ANTIALIAS, "Anti-Alias", FF_TYPE_BOOLEAN, true );
+	SetParamGroup( PT_ANTIALIAS, "Settings" );
+
+	SetOptionParamInfo( PT_QUALITY, "Quality", 3, params[ PT_QUALITY ] );
+	SetParamElementInfo( PT_QUALITY, 0, "Full", 0.0f );
+	SetParamElementInfo( PT_QUALITY, 1, "Half", 1.0f );
+	SetParamElementInfo( PT_QUALITY, 2, "Quarter", 2.0f );
+	SetParamGroup( PT_QUALITY, "Settings" );
+
+	SetOptionParamInfo( PT_UPSCALE, "Upscale", 2, params[ PT_UPSCALE ] );
+	SetParamElementInfo( PT_UPSCALE, 0, "Smooth", 0.0f );
+	SetParamElementInfo( PT_UPSCALE, 1, "Blocky", 1.0f );
+	SetParamGroup( PT_UPSCALE, "Settings" );
+
 	SetOptionParamInfo( PT_SLOPE_QUALITY, "Slope Quality", 2, params[ PT_SLOPE_QUALITY ] );
 	SetParamElementInfo( PT_SLOPE_QUALITY, 0, "Fast", 0.0f );
 	SetParamElementInfo( PT_SLOPE_QUALITY, 1, "Smooth", 1.0f );
-	SetParamGroup( PT_SLOPE_QUALITY, "Performance" );
+	SetParamGroup( PT_SLOPE_QUALITY, "Settings" );
 
 	// Hide whatever doesn't apply to the default mode. No event needed during construction.
 	UpdateVisibility( false );
@@ -1039,6 +1507,13 @@ FFResult NoiseLab::InitGL( const FFGLViewportStruct* vp )
 		DeInitGL();
 		return FF_FAIL;
 	}
+	if( !blitShader.Compile( vertexShaderCode, blitFragmentShaderCode ) )
+	{
+		FFGLLog::LogToHost( "NoiseLab: upscale shader failed to compile" );
+		DeInitGL();
+		return FF_FAIL;
+	}
+	blitImageLocation = blitShader.FindUniform( "uImage" );
 	if( !quad.Initialise() )
 	{
 		FFGLLog::LogToHost( "NoiseLab: quad failed to initialise" );
@@ -1055,6 +1530,7 @@ FFResult NoiseLab::InitGL( const FFGLViewportStruct* vp )
 	loc.octRow1   = shader.FindUniform( "uOctRow1" );
 	loc.octCell   = shader.FindUniform( "uOctCell" );
 	loc.octFrac   = shader.FindUniform( "uOctFrac" );
+	loc.octFade   = shader.FindUniform( "uOctFade" );
 	loc.evolve    = shader.FindUniform( "uEvolve" );
 	loc.period    = shader.FindUniform( "uPeriod" );
 	loc.seed      = shader.FindUniform( "uSeed" );
@@ -1104,7 +1580,9 @@ FFResult NoiseLab::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	dt            = std::min( std::max( dt, 0.0 ), 0.1 );
 
 	// Low-pass the continuous parameters. Everything else follows the host value directly.
-	const float blend = firstFrame ? 1.0f : 1.0f - std::exp( -static_cast< float >( dt ) / 0.05f );
+	// With Smoothing off the blend is 1, so every parameter jumps straight to its new value.
+	const bool smoothing = params[ PT_SMOOTHING ] > 0.5f;
+	const float blend    = ( firstFrame || !smoothing ) ? 1.0f : 1.0f - std::exp( -static_cast< float >( dt ) / 0.05f );
 	for( unsigned int i = 0; i < NUM_PARAMS; ++i )
 	{
 		if( IsSmoothed( i ) )
@@ -1113,6 +1591,27 @@ FFResult NoiseLab::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 			smoothed[ i ] = params[ i ];
 	}
 	firstFrame = false;
+
+	// --- Quality: render at full, half or quarter size ---
+	// The reduced sizes draw into our own framebuffer, which is then stretched to the output. It
+	// is (re)created only when the output size or the Quality setting changes, never per frame.
+	const int quality = std::min( std::max( static_cast< int >( std::floor( smoothed[ PT_QUALITY ] + 0.5f ) ), 0 ), 2 );
+	const GLsizei renderWidth  = std::max< GLsizei >( static_cast< GLsizei >( currentViewport.width ) >> quality, 1 );
+	const GLsizei renderHeight = std::max< GLsizei >( static_cast< GLsizei >( currentViewport.height ) >> quality, 1 );
+	bool useLowRes = quality > 0 && !lowResFailed;
+	if( useLowRes && ( lowRes.GetWidth() != static_cast< GLuint >( renderWidth ) || lowRes.GetHeight() != static_cast< GLuint >( renderHeight ) ) )
+	{
+		lowRes.Release();
+		// 16 bit float, so the extra pass adds no banding in 16 bit compositions.
+		if( !lowRes.Initialise( renderWidth, renderHeight, GL_RGBA16F ) )
+		{
+			FFGLLog::LogToHost( "NoiseLab: could not create the reduced quality buffer, rendering at full size" );
+			useLowRes    = false;
+			lowResFailed = true;// don't retry (and log) every frame; cleared when GL is re-initialised
+		}
+	}
+	// Height in pixels of what the noise shader actually draws into.
+	const float pixelHeight = static_cast< float >( useLowRes ? renderHeight : std::max< GLsizei >( static_cast< GLsizei >( currentViewport.height ), 1 ) );
 
 	// --- Coordinates: fold rotation, stretch and scale into one 2x2 matrix ---
 	const double scale    = ScaleFromSlider( smoothed[ PT_SCALE ] );
@@ -1158,6 +1657,10 @@ FFResult NoiseLab::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 
 	GLfloat octRow0[ MAX_OCTAVES * 2 ];
 	GLfloat octRow1[ MAX_OCTAVES * 2 ];
+	// Anti-alias: an octave whose cells are smaller than about two pixels can only shimmer, so
+	// fade each octave out as its cell size shrinks from four pixels to two.
+	const bool antiAlias = smoothed[ PT_ANTIALIAS ] > 0.5f;
+	GLfloat octFade[ MAX_OCTAVES ];
 	GLint octCell[ MAX_OCTAVES * 2 ];
 	GLfloat octFrac[ MAX_OCTAVES * 2 ];
 	// Extreme Lacunarity and Scale multiply up fast (16^7 is 268 million). Past a few million
@@ -1180,6 +1683,16 @@ FFResult NoiseLab::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 		octRow0[ i * 2 + 1 ] = static_cast< GLfloat >( -sinT * f );
 		octRow1[ i * 2 ]     = static_cast< GLfloat >( sinT * f );
 		octRow1[ i * 2 + 1 ] = static_cast< GLfloat >( cosT * f );
+		// The first octave is never faded, so the frame can't go flat grey at extreme Scale or Stretch.
+		if( antiAlias && i > 0 )
+		{
+			const double cellPixels = pixelHeight / ( scale * std::max( stretch, 1.0 / stretch ) * f );
+			octFade[ i ]            = static_cast< GLfloat >( std::min( std::max( ( cellPixels - 2.0 ) / 2.0, 0.0 ), 1.0 ) );
+		}
+		else
+		{
+			octFade[ i ] = 1.0f;
+		}
 		SplitOffset( octaveOffset[ i ].x, octCell[ i * 2 ], octFrac[ i * 2 ] );
 		SplitOffset( octaveOffset[ i ].y, octCell[ i * 2 + 1 ], octFrac[ i * 2 + 1 ] );
 		frequency *= lacunarity;
@@ -1294,6 +1807,30 @@ FFResult NoiseLab::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 
 	const float aspect = currentViewport.height > 0 ? static_cast< float >( currentViewport.width ) / static_cast< float >( currentViewport.height ) : 1.0f;
 
+	// --- Draw ---
+	// When rendering at reduced size, point GL at our own framebuffer first. Everything changed
+	// here is recorded and put back afterwards: FFGL requires the context to be left as found.
+	GLint previousDrawFBO   = 0;
+	GLint previousReadFBO   = 0;
+	GLint previousViewport[ 4 ] = { 0, 0, 0, 0 };
+	GLboolean blendWasOn    = GL_FALSE;
+	GLboolean depthWasOn    = GL_FALSE;
+	if( useLowRes )
+	{
+		glGetIntegerv( GL_DRAW_FRAMEBUFFER_BINDING, &previousDrawFBO );
+		glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &previousReadFBO );
+		glGetIntegerv( GL_VIEWPORT, previousViewport );
+		// Our buffer starts with undefined contents, so the noise must overwrite it outright:
+		// no blending with what's there, and no depth test against its uncleared depth buffer.
+		blendWasOn = glIsEnabled( GL_BLEND );
+		depthWasOn = glIsEnabled( GL_DEPTH_TEST );
+		glDisable( GL_BLEND );
+		glDisable( GL_DEPTH_TEST );
+		glBindFramebuffer( GL_FRAMEBUFFER, lowRes.GetGLID() );
+		glViewport( 0, 0, renderWidth, renderHeight );
+	}
+
+	{
 	//FFGL requires us to leave the context in a default state on return, so use this scoped binding to help us do that.
 	ScopedShaderBinding shaderBinding( shader.GetGLID() );
 	glUniform1f( loc.aspect, aspect );
@@ -1306,6 +1843,7 @@ FFResult NoiseLab::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	glUniform2fv( loc.octRow1, MAX_OCTAVES, octRow1 );
 	glUniform2iv( loc.octCell, MAX_OCTAVES, octCell );
 	glUniform2fv( loc.octFrac, MAX_OCTAVES, octFrac );
+	glUniform1fv( loc.octFade, MAX_OCTAVES, octFade );
 
 	glUniform1f( loc.evolve, static_cast< GLfloat >( evolve ) );
 	glUniform1i( loc.period, period );
@@ -1325,7 +1863,7 @@ FFResult NoiseLab::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	glUniform1i( loc.absolute, smoothed[ PT_ABSOLUTE ] > 0.5f ? 1 : 0 );
 	glUniform1i( loc.invert, smoothed[ PT_INVERT ] > 0.5f ? 1 : 0 );
 
-	glUniform1f( loc.resY, static_cast< GLfloat >( std::max< FFUInt32 >( currentViewport.height, 1 ) ) );
+	glUniform1f( loc.resY, pixelHeight );
 	glUniform1i( loc.mode, GetMode() );
 	glUniform1i( loc.channels, smoothed[ PT_CHANNELS ] > 0.5f ? 1 : 0 );
 	glUniform1i( loc.alphaNoise, smoothed[ PT_ALPHA_NOISE ] > 0.5f ? 1 : 0 );
@@ -1344,6 +1882,30 @@ FFResult NoiseLab::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	glUniform1f( loc.shift, smoothed[ PT_SHIFT ] - std::floor( smoothed[ PT_SHIFT ] ) );
 
 	quad.Draw();
+	}
+
+	if( useLowRes )
+	{
+		// Back to the host's framebuffer, viewport and enables.
+		glBindFramebuffer( GL_DRAW_FRAMEBUFFER, static_cast< GLuint >( previousDrawFBO ) );
+		glBindFramebuffer( GL_READ_FRAMEBUFFER, static_cast< GLuint >( previousReadFBO ) );
+		glViewport( previousViewport[ 0 ], previousViewport[ 1 ], previousViewport[ 2 ], previousViewport[ 3 ] );
+		if( blendWasOn )
+			glEnable( GL_BLEND );
+		if( depthWasOn )
+			glEnable( GL_DEPTH_TEST );
+
+		// Stretch the small render over the output. Smooth uses the GPU's bilinear filter;
+		// Blocky uses nearest-neighbour, which keeps the big square pixels.
+		ScopedShaderBinding blitBinding( blitShader.GetGLID() );
+		ScopedSamplerActivation activateSampler( 0 );
+		Scoped2DTextureBinding textureBinding( lowRes.GetTextureInfo().Handle );
+		const GLint filter = smoothed[ PT_UPSCALE ] > 0.5f ? GL_NEAREST : GL_LINEAR;
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter );
+		glUniform1i( blitImageLocation, 0 );
+		quad.Draw();
+	}
 
 	return FF_SUCCESS;
 }
@@ -1351,6 +1913,10 @@ FFResult NoiseLab::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 FFResult NoiseLab::DeInitGL()
 {
 	shader.FreeGLResources();
+	blitShader.FreeGLResources();
+	lowRes.Release();
+	lowResFailed      = false;
+	blitImageLocation = -1;
 	quad.Release();
 	loc = Locations();
 	return FF_SUCCESS;
@@ -1364,7 +1930,7 @@ FFResult NoiseLab::SetFloatParameter( unsigned int index, float value )
 	params[ index ] = value;
 
 	// These two decide which other parameters are relevant, so refresh what Resolume shows.
-	if( index == PT_MODE || index == PT_STOPS )
+	if( index == PT_MODE || index == PT_STOPS || index == PT_QUALITY )
 		UpdateVisibility( true );
 
 	return FF_SUCCESS;
@@ -1391,6 +1957,8 @@ void NoiseLab::UpdateVisibility( bool raiseEvent )
 	SetParamVisibility( PT_CHANNELS, mode == MODE_NORMAL, raiseEvent );
 	SetParamVisibility( PT_HEIGHT, relief, raiseEvent );
 	SetParamVisibility( PT_SLOPE_QUALITY, relief, raiseEvent );
+	// Upscale only matters when rendering below full size.
+	SetParamVisibility( PT_UPSCALE, std::floor( params[ PT_QUALITY ] + 0.5f ) > 0.0f, raiseEvent );
 	SetParamVisibility( PT_LIGHT_ANGLE, planar, raiseEvent );
 	SetParamVisibility( PT_SPECULAR, planar, raiseEvent );
 	SetParamVisibility( PT_TINT, planar, raiseEvent );
@@ -1456,6 +2024,10 @@ char* NoiseLab::GetParameterDisplay( unsigned int index )
 	case PT_TINT:
 	case PT_INTERP:
 	case PT_GRAD_LOOP:
+	case PT_SMOOTHING:
+	case PT_ANTIALIAS:
+	case PT_QUALITY:
+	case PT_UPSCALE:
 	case PT_SLOPE_QUALITY:
 		return CFFGLPlugin::GetParameterDisplay( index );
 	default:
