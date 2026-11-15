@@ -3,8 +3,8 @@
 #include <chrono>
 
 // NoiseLab - procedural noise source for Resolume (FFGL 2.x).
-// Step 2: Perlin + FBM with seed, stretch, rotation, detail controls, scroll, domain warp and
-// the output shaping chain (absolute, cycles, clips, contrast, invert).
+// Step 3: Perlin + FBM with shaping, scroll and warp, a multi-stop gradient, and four output
+// modes (gradient, greyscale, normal map, planar relief).
 class NoiseLab : public CFFGLPlugin
 {
 public:
@@ -20,7 +20,8 @@ public:
 	char* GetParameterDisplay( unsigned int index ) override;
 
 	static const int MAX_OCTAVES = 8;
-	static const int NUM_PARAMS  = 21;
+	static const int MAX_STOPS   = 6;
+	static const int NUM_PARAMS  = 62;
 
 private:
 	struct Vec2d
@@ -41,6 +42,10 @@ private:
 
 	char displayBuffer[ 16 ] = {};
 
+	int GetMode() const;
+	int GetStopCount() const;
+	void UpdateVisibility( bool raiseEvent );// hide parameters that don't apply to the current mode / stop count
+
 	ffglex::FFGLShader shader;  //!< Compiles and links the noise shader.
 	ffglex::FFGLScreenQuad quad;//!< Full screen quad the shader is drawn on.
 
@@ -52,5 +57,8 @@ private:
 		GLint evolve = -1, period = -1, seed = -1, type = -1;
 		GLint warp = -1, warpScale = -1, warpCell = -1, warpFrac = -1;
 		GLint lowClip = -1, clipRange = -1, contrast = -1, cycles = -1, absolute = -1, invert = -1;
+		GLint resY = -1, mode = -1, channels = -1, alphaNoise = -1;
+		GLint relief = -1, lightDir = -1, specular = -1, tint = -1, smoothSlope = -1;
+		GLint stopCount = -1, stopPos = -1, stopCol = -1, interp = -1, shift = -1;
 	} loc;
 };

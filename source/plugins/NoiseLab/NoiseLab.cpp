@@ -33,35 +33,159 @@ enum ParamID : FFUInt32
 	PT_ABSOLUTE,
 	PT_CYCLES,
 	PT_INVERT,
+	// Output
+	PT_MODE,
+	PT_CHANNELS,
+	PT_ALPHA_NOISE,
+	// Relief
+	PT_HEIGHT,
+	PT_LIGHT_ANGLE,
+	PT_SPECULAR,
+	PT_TINT,
+	// Gradient
+	PT_STOPS,
+	PT_INTERP,
+	PT_SHIFT,
+	PT_STOP_FIRST,// each stop is five parameters, see StopField
+	PT_STOP_END = PT_STOP_FIRST + NoiseLab::MAX_STOPS * 5,
+	// Performance
+	PT_SLOPE_QUALITY = PT_STOP_END,
 
 	PT_COUNT
 };
+// The five parameters of one gradient stop. Hue, saturation, brightness and alpha in a row are
+// shown by Resolume as a single colour picker, named after the hue parameter.
+enum StopField : FFUInt32
+{
+	SF_HUE,
+	SF_SAT,
+	SF_BRI,
+	SF_ALPHA,
+	SF_POS,
+};
+static unsigned int StopParam( int stop, StopField field )
+{
+	return PT_STOP_FIRST + static_cast< unsigned int >( stop ) * 5 + field;
+}
+enum OutputMode
+{
+	MODE_GRADIENT,
+	MODE_GREYSCALE,
+	MODE_NORMAL,
+	MODE_PLANAR,
+};
 static_assert( PT_COUNT == NoiseLab::NUM_PARAMS, "NUM_PARAMS in NoiseLab.h must match the ParamID list" );
 
+// --- Slider curves ---
+// Wide-range parameters use a 0..1 (or -1..1) slider with a curve, so there is fine control at
+// the subtle end and room for extremes at the other. Each has an inverse, used for the defaults.
+
+// Scale: 0..1 -> 0.1x..256x, exponential (equal knob travel = equal zoom ratio).
+static const float SCALE_MIN = 0.1f, SCALE_MAX = 256.0f;
+static float ScaleFromSlider( float v )
+{
+	return SCALE_MIN * std::pow( SCALE_MAX / SCALE_MIN, v );
+}
+// Warp Scale: 0..1 -> 0.05x..16x, exponential.
+static const float WARP_SCALE_MIN = 0.05f, WARP_SCALE_MAX = 16.0f;
+static float WarpScaleFromSlider( float v )
+{
+	return WARP_SCALE_MIN * std::pow( WARP_SCALE_MAX / WARP_SCALE_MIN, v );
+}
+// Lacunarity: 0..1 -> 0.25..16, exponential. The centre of the slider is exactly 2.
+static const float LACUNARITY_MIN = 0.25f, LACUNARITY_MAX = 16.0f;
+static float LacunarityFromSlider( float v )
+{
+	return LACUNARITY_MIN * std::pow( LACUNARITY_MAX / LACUNARITY_MIN, v );
+}
+// Inverse of the three exponential curves above.
+static float SliderFromExp( float value, float minValue, float maxValue )
+{
+	return std::log( value / minValue ) / std::log( maxValue / minValue );
+}
+// Evolve Speed: -1..1 -> -16..16 units per second on a cubic curve. Half the slider is still
+// only +-2, so slow drifts stay easy to set, and zero is exactly zero.
+static const float SPEED_MAX = 16.0f;
+static float SpeedFromSlider( float v )
+{
+	return SPEED_MAX * v * v * v;
+}
+static float SliderFromSpeed( float speed )
+{
+	return std::cbrt( speed / SPEED_MAX );
+}
+// Warp: 0..1 -> 0..8 on a squared curve (the old maximum of 1 is now at about 35%).
+static const float WARP_MAX = 8.0f;
+static float WarpFromSlider( float v )
+{
+	return WARP_MAX * v * v;
+}
+// Stretch: -1..1 -> 1/64x..64x on one axis and the inverse on the other, so the extremes are
+// close to straight lines.
+static const double STRETCH_MAX = 64.0;
+
+// Relief Height: 0..1 -> 0..4 on a squared curve.
+static const float HEIGHT_MAX = 4.0f;
+static float HeightFromSlider( float v )
+{
+	return HEIGHT_MAX * v * v;
+}
+
 // Defaults, in ParamID order.
-static const float PARAM_DEFAULTS[ NoiseLab::NUM_PARAMS ] = {
-	1.0f, // Type: FBM
-	0.0f, // Seed
-	0.5f, // Scale slider (4x)
-	0.0f, // Stretch
-	0.0f, // Rotation
-	4.0f, // Octaves
-	2.0f, // Lacunarity
-	0.5f, // Gain
-	0.25f,// Evolve Speed
-	0.0f, // Loop
-	0.0f, // Loop Phase
-	0.0f, // Scroll Angle
-	0.0f, // Scroll Speed
-	0.0f, // Warp
-	0.5f, // Warp Scale slider (1x)
-	0.0f, // Low Clip
-	1.0f, // High Clip
-	0.0f, // Contrast
-	0.0f, // Absolute
-	1.0f, // Cycles
-	0.0f, // Invert
-};
+static void FillDefaults( float* d )
+{
+	d[ PT_TYPE ]         = 1.0f;// FBM
+	d[ PT_SEED ]         = 0.0f;
+	d[ PT_SCALE ]        = SliderFromExp( 4.0f, SCALE_MIN, SCALE_MAX );
+	d[ PT_STRETCH ]      = 0.0f;
+	d[ PT_ROTATION ]     = 0.0f;
+	d[ PT_OCTAVES ]      = 4.0f;
+	d[ PT_LACUNARITY ]   = SliderFromExp( 2.0f, LACUNARITY_MIN, LACUNARITY_MAX );
+	d[ PT_GAIN ]         = 0.5f;
+	d[ PT_SPEED ]        = SliderFromSpeed( 0.25f );
+	d[ PT_LOOP ]         = 0.0f;
+	d[ PT_PHASE ]        = 0.0f;
+	d[ PT_SCROLL_ANGLE ] = 0.0f;
+	d[ PT_SCROLL_SPEED ] = 0.0f;
+	d[ PT_WARP ]         = 0.0f;
+	d[ PT_WARP_SCALE ]   = SliderFromExp( 1.0f, WARP_SCALE_MIN, WARP_SCALE_MAX );
+	d[ PT_LOW_CLIP ]     = 0.0f;
+	d[ PT_HIGH_CLIP ]    = 1.0f;
+	d[ PT_CONTRAST ]     = 0.0f;
+	d[ PT_ABSOLUTE ]     = 0.0f;
+	d[ PT_CYCLES ]       = 1.0f;
+	d[ PT_INVERT ]       = 0.0f;
+
+	d[ PT_MODE ]        = static_cast< float >( MODE_GRADIENT );
+	d[ PT_CHANNELS ]    = 0.0f;
+	d[ PT_ALPHA_NOISE ] = 0.0f;
+
+	d[ PT_HEIGHT ]      = 0.35f;
+	d[ PT_LIGHT_ANGLE ] = 0.0f;
+	d[ PT_SPECULAR ]    = 0.5f;
+	d[ PT_TINT ]        = 0.0f;
+
+	d[ PT_STOPS ]  = 2.0f;
+	d[ PT_INTERP ] = 1.0f;// Linear, so the default black to white gradient equals Greyscale
+	d[ PT_SHIFT ]  = 0.0f;
+	// Stops 1 and 2 are black and white at the ends. Stops 3 to 6 only appear when Stops is
+	// raised; they start with distinct colours at spread-out positions so each one is visible
+	// the moment it is enabled.
+	static const float stopDefaults[ NoiseLab::MAX_STOPS ][ 5 ] = {
+		// hue   sat   bri   alpha pos
+		{ 0.00f, 0.0f, 0.0f, 1.0f, 0.00f },
+		{ 0.00f, 0.0f, 1.0f, 1.0f, 1.00f },
+		{ 0.07f, 1.0f, 1.0f, 1.0f, 0.50f },
+		{ 0.62f, 1.0f, 0.6f, 1.0f, 0.25f },
+		{ 0.88f, 1.0f, 1.0f, 1.0f, 0.75f },
+		{ 0.50f, 1.0f, 1.0f, 1.0f, 0.90f },
+	};
+	for( int s = 0; s < NoiseLab::MAX_STOPS; ++s )
+		for( int f = 0; f < 5; ++f )
+			d[ PT_STOP_FIRST + s * 5 + f ] = stopDefaults[ s ][ f ];
+
+	d[ PT_SLOPE_QUALITY ] = 0.0f;// Fast
+}
 
 // Which parameters get the ~50 ms low-pass so stepped MIDI/FFT input glides instead of jumping.
 // Wrapping parameters (rotation, phase, angle), switches and speeds (already integrated) do not.
@@ -80,10 +204,16 @@ static bool IsSmoothed( unsigned int index )
 	case PT_HIGH_CLIP:
 	case PT_CONTRAST:
 	case PT_CYCLES:
+	case PT_HEIGHT:
+	case PT_SPECULAR:
 		return true;
 	default:
-		return false;
+		break;
 	}
+	// Gradient stop positions glide too; colours follow the picker directly.
+	if( index >= PT_STOP_FIRST && index < PT_STOP_END )
+		return ( index - PT_STOP_FIRST ) % 5 == SF_POS;
+	return false;
 }
 
 // The evolution axis of the noise repeats every EVOLVE_WRAP units, so the integrated phase can be
@@ -98,15 +228,6 @@ static const int LOOP_LENGTH = 4;
 static const double LATTICE_WRAP = 4294967296.0;
 
 static const double PI = 3.14159265358979323846;
-
-static float ScaleFromSlider( float v )
-{
-	return 0.25f * std::pow( 256.0f, v );// 0..1 -> 0.25x..64x
-}
-static float WarpScaleFromSlider( float v )
-{
-	return 0.25f * std::pow( 16.0f, v );// 0..1 -> 0.25x..4x
-}
 
 // Split a scroll position into the whole lattice cell and the fraction inside it. Sending these
 // separately keeps the noise sharp however far it has scrolled: a single float would run out of
@@ -129,10 +250,10 @@ static CFFGLPluginInfo PluginInfo(
 	2,                                  // API major version number
 	1,                                  // API minor version number
 	0,                                  // Plugin major version number
-	2,                                  // Plugin minor version number
+	4,                                  // Plugin minor version number
 	FF_SOURCE,                          // Plugin type
 	"Procedural noise generator",       // Plugin description
-	"NoiseLab step 2: shaping, scroll and warp"// About
+	"NoiseLab step 3: gradient and output modes"// About
 );
 
 static const char vertexShaderCode[] = R"(#version 410 core
@@ -168,7 +289,7 @@ uniform int uSeed;
 uniform int uType;           // 0 = Perlin (single octave), 1 = FBM
 
 // --- Warp ---
-uniform float uWarp;         // 0..1
+uniform float uWarp;         // strength, 0..8
 uniform float uWarpScale;    // warp feature size relative to the noise
 uniform ivec2 uWarpCell;     // scroll position of the warp field
 uniform vec2 uWarpFrac;
@@ -180,6 +301,26 @@ uniform float uContrast;     // multiplier around mid grey
 uniform float uCycles;
 uniform int uAbsolute;
 uniform int uInvert;
+
+// --- Output ---
+uniform float uResY;         // output height in pixels
+uniform int uMode;           // 0 = gradient, 1 = greyscale, 2 = normal map, 3 = planar
+uniform int uChannels;       // normal map layout: 0 = red+green (standard), 1 = red+blue
+uniform int uAlphaNoise;     // multiply alpha by the noise value
+
+// --- Relief ---
+uniform float uRelief;       // surface height, already divided by Scale
+uniform vec2 uLightDir;      // direction the key light comes from, on screen
+uniform float uSpecular;
+uniform int uTint;           // planar: colour the surface with the gradient
+uniform int uSmoothSlope;    // 0 = screen-space derivatives (free), 1 = two extra noise samples
+
+// --- Gradient ---
+uniform int uStopCount;      // 2..6, sorted by position on the CPU
+uniform float uStopPos[ 6 ];
+uniform vec4 uStopCol[ 6 ];  // straight (not premultiplied) RGBA
+uniform int uInterp;         // 0 = smooth, 1 = linear, 2 = stepped
+uniform float uShift;        // rotates the noise through the gradient, 0..1 wraps
 
 in vec2 uv;
 out vec4 fragColor;
@@ -306,10 +447,10 @@ float shape( float v )
 	return v;
 }
 
-void main()
+// The finished 0..1 noise value at a screen position. Everything (warp, fractal, shaping) is in
+// here so the relief modes can sample neighbouring positions.
+float heightAt( vec2 s )
 {
-	// Centre the pattern and correct for aspect so cells stay square at any output size.
-	vec2 s = ( uv - 0.5 ) * vec2( uAspect, 1.0 );
 	vec2 p = vec2( dot( uRow0, s ), dot( uRow1, s ) );
 
 	uint seed = uint( uSeed ) * 7919u;
@@ -318,19 +459,97 @@ void main()
 	float octaves = uType == 0 ? 1.0 : uOctaves;
 	float n = fractal( p, octaves, seed );
 
-	float v = clamp( 0.5 + 0.6 * n, 0.0, 1.0 );
-	v = shape( v );
-	fragColor = vec4( v, v, v, 1.0 );
+	return shape( clamp( 0.5 + 0.6 * n, 0.0, 1.0 ) );
+}
+
+// Multi-stop gradient lookup. Stops arrive sorted, so walking them in order and blending toward
+// each one in turn leaves exactly the two neighbours of v contributing.
+vec4 gradient( float v )
+{
+	float t = uShift > 0.0 ? fract( v + uShift ) : v;
+	vec4 c = uStopCol[ 0 ];
+	for( int i = 1; i < uStopCount; ++i )
+	{
+		float a = uStopPos[ i - 1 ];
+		float b = uStopPos[ i ];
+		float k;
+		if( uInterp == 2 )
+			k = step( 0.5 * ( a + b ), t );// flat bands that switch halfway between stops
+		else
+		{
+			k = clamp( ( t - a ) / max( b - a, 0.0001 ), 0.0, 1.0 );
+			if( uInterp == 0 )
+				k = k * k * ( 3.0 - 2.0 * k );
+		}
+		c = mix( c, uStopCol[ i ], k );
+	}
+	return c;
+}
+
+void main()
+{
+	// Centre the pattern and correct for aspect so cells stay square at any output size.
+	vec2 s = ( uv - 0.5 ) * vec2( uAspect, 1.0 );
+	float v = heightAt( s );
+
+	// Slope of the noise in value per screen height. The derivative functions compare this pixel
+	// with its neighbours in the 2x2 block the GPU shades together: free, but slightly blocky.
+	vec2 slope = vec2( dFdx( v ), dFdy( v ) ) * uResY;
+
+	vec4 col;
+	if( uMode == 1 )
+	{
+		col = vec4( v, v, v, 1.0 );
+	}
+	else if( uMode == 0 )
+	{
+		col = gradient( v );
+	}
+	else
+	{
+		if( uSmoothSlope != 0 )
+		{
+			// Sample one pixel right and one pixel up instead. Three times the noise cost.
+			float e = 1.0 / uResY;
+			slope = ( vec2( heightAt( s + vec2( e, 0.0 ) ), heightAt( s + vec2( 0.0, e ) ) ) - v ) / e;
+		}
+		// Surface normal of the noise treated as a height field. z points at the viewer.
+		vec3 n = normalize( vec3( -slope * uRelief, 1.0 ) );
+
+		if( uMode == 2 )
+		{
+			vec3 e = n * 0.5 + 0.5;// 0.5 = flat
+			col = uChannels == 0 ? vec4( e, 1.0 ) : vec4( e.x, 0.0, e.y, 1.0 );
+		}
+		else
+		{
+			// Planar: warm key light, cool fill from the opposite side, tight highlight.
+			vec4 base  = uTint != 0 ? gradient( v ) : vec4( 0.85, 0.85, 0.85, 1.0 );
+			vec3 key   = normalize( vec3( uLightDir, 0.75 ) );
+			vec3 fill  = normalize( vec3( -uLightDir, 0.45 ) );
+			vec3 light = vec3( 0.06 )
+			           + max( dot( n, key ), 0.0 ) * vec3( 1.0, 0.93, 0.82 )
+			           + max( dot( n, fill ), 0.0 ) * 0.45 * vec3( 0.6, 0.78, 1.0 );
+			vec3 lit = base.rgb * light * ( 0.6 + 0.4 * v );// darker in the valleys
+			vec3 halfway = normalize( key + vec3( 0.0, 0.0, 1.0 ) );
+			lit += uSpecular * pow( max( dot( n, halfway ), 0.0 ), 48.0 ) * vec3( 1.0, 0.97, 0.9 );
+			col = vec4( lit, base.a );
+		}
+	}
+
+	float alpha = clamp( col.a, 0.0, 1.0 );
+	if( uAlphaNoise != 0 )
+		alpha *= v;
+	// FFGL plugins must output premultiplied colour.
+	fragColor = vec4( clamp( col.rgb, 0.0, 1.0 ) * alpha, alpha );
 }
 )";
 
 NoiseLab::NoiseLab()
 {
+	FillDefaults( params );
 	for( int i = 0; i < NUM_PARAMS; ++i )
-	{
-		params[ i ]   = PARAM_DEFAULTS[ i ];
-		smoothed[ i ] = PARAM_DEFAULTS[ i ];
-	}
+		smoothed[ i ] = params[ i ];
 
 	// A source has no inputs.
 	SetMinInputs( 0 );
@@ -364,16 +583,14 @@ NoiseLab::NoiseLab()
 	SetParamGroup( PT_OCTAVES, "Detail" );
 
 	SetParamInfof( PT_LACUNARITY, "Lacunarity", FF_TYPE_STANDARD );
-	SetParamRange( PT_LACUNARITY, 1.5f, 4.0f );
 	SetParamGroup( PT_LACUNARITY, "Detail" );
 
 	SetParamInfof( PT_GAIN, "Gain", FF_TYPE_STANDARD );
-	SetParamRange( PT_GAIN, 0.2f, 0.8f );
 	SetParamGroup( PT_GAIN, "Detail" );
 
 	// --- Motion ---
 	SetParamInfof( PT_SPEED, "Evolve Speed", FF_TYPE_STANDARD );
-	SetParamRange( PT_SPEED, -2.0f, 2.0f );
+	SetParamRange( PT_SPEED, -1.0f, 1.0f );
 	SetParamGroup( PT_SPEED, "Motion" );
 
 	SetParamInfo( PT_LOOP, "Loop", FF_TYPE_BOOLEAN, false );
@@ -418,6 +635,77 @@ NoiseLab::NoiseLab()
 	SetParamInfo( PT_INVERT, "Invert", FF_TYPE_BOOLEAN, false );
 	SetParamGroup( PT_INVERT, "Shape" );
 
+	// --- Output ---
+	SetOptionParamInfo( PT_MODE, "Output Mode", 4, params[ PT_MODE ] );
+	SetParamElementInfo( PT_MODE, 0, "Gradient", static_cast< float >( MODE_GRADIENT ) );
+	SetParamElementInfo( PT_MODE, 1, "Greyscale", static_cast< float >( MODE_GREYSCALE ) );
+	SetParamElementInfo( PT_MODE, 2, "Normal Map", static_cast< float >( MODE_NORMAL ) );
+	SetParamElementInfo( PT_MODE, 3, "Planar", static_cast< float >( MODE_PLANAR ) );
+	SetParamGroup( PT_MODE, "Output" );
+
+	SetOptionParamInfo( PT_CHANNELS, "Channels", 2, params[ PT_CHANNELS ] );
+	SetParamElementInfo( PT_CHANNELS, 0, "Red+Green", 0.0f );
+	SetParamElementInfo( PT_CHANNELS, 1, "Red+Blue", 1.0f );
+	SetParamGroup( PT_CHANNELS, "Output" );
+
+	SetParamInfo( PT_ALPHA_NOISE, "Alpha From Noise", FF_TYPE_BOOLEAN, false );
+	SetParamGroup( PT_ALPHA_NOISE, "Output" );
+
+	// --- Relief ---
+	SetParamInfof( PT_HEIGHT, "Height", FF_TYPE_STANDARD );
+	SetParamGroup( PT_HEIGHT, "Relief" );
+
+	SetParamInfof( PT_LIGHT_ANGLE, "Light Angle", FF_TYPE_STANDARD );
+	SetParamRange( PT_LIGHT_ANGLE, 0.0f, 360.0f );
+	SetParamGroup( PT_LIGHT_ANGLE, "Relief" );
+
+	SetParamInfof( PT_SPECULAR, "Specular", FF_TYPE_STANDARD );
+	SetParamGroup( PT_SPECULAR, "Relief" );
+
+	SetParamInfo( PT_TINT, "Tint By Gradient", FF_TYPE_BOOLEAN, false );
+	SetParamGroup( PT_TINT, "Relief" );
+
+	// --- Gradient ---
+	SetParamInfof( PT_STOPS, "Stops", FF_TYPE_INTEGER );
+	SetParamRange( PT_STOPS, 2.0f, static_cast< float >( MAX_STOPS ) );
+	SetParamGroup( PT_STOPS, "Gradient" );
+
+	SetOptionParamInfo( PT_INTERP, "Blend", 3, params[ PT_INTERP ] );
+	SetParamElementInfo( PT_INTERP, 0, "Smooth", 0.0f );
+	SetParamElementInfo( PT_INTERP, 1, "Linear", 1.0f );
+	SetParamElementInfo( PT_INTERP, 2, "Stepped", 2.0f );
+	SetParamGroup( PT_INTERP, "Gradient" );
+
+	SetParamInfof( PT_SHIFT, "Gradient Shift", FF_TYPE_STANDARD );
+	SetParamGroup( PT_SHIFT, "Gradient" );
+
+	for( int s = 0; s < MAX_STOPS; ++s )
+	{
+		// FFGL parameter names are limited to 16 characters.
+		char name[ 17 ];
+		snprintf( name, sizeof( name ), "Stop %d", s + 1 );
+		SetParamInfof( StopParam( s, SF_HUE ), name, FF_TYPE_HUE );
+		snprintf( name, sizeof( name ), "Stop %d Sat", s + 1 );
+		SetParamInfof( StopParam( s, SF_SAT ), name, FF_TYPE_SATURATION );
+		snprintf( name, sizeof( name ), "Stop %d Bri", s + 1 );
+		SetParamInfof( StopParam( s, SF_BRI ), name, FF_TYPE_BRIGHTNESS );
+		snprintf( name, sizeof( name ), "Stop %d Alpha", s + 1 );
+		SetParamInfof( StopParam( s, SF_ALPHA ), name, FF_TYPE_ALPHA );
+		snprintf( name, sizeof( name ), "Stop %d Pos", s + 1 );
+		SetParamInfof( StopParam( s, SF_POS ), name, FF_TYPE_STANDARD );
+		for( int f = 0; f < 5; ++f )
+			SetParamGroup( PT_STOP_FIRST + s * 5 + f, "Gradient" );
+	}
+
+	// --- Performance ---
+	SetOptionParamInfo( PT_SLOPE_QUALITY, "Slope Quality", 2, params[ PT_SLOPE_QUALITY ] );
+	SetParamElementInfo( PT_SLOPE_QUALITY, 0, "Fast", 0.0f );
+	SetParamElementInfo( PT_SLOPE_QUALITY, 1, "Smooth", 1.0f );
+	SetParamGroup( PT_SLOPE_QUALITY, "Performance" );
+
+	// Hide whatever doesn't apply to the default mode. No event needed during construction.
+	UpdateVisibility( false );
+
 	FFGLLog::LogToHost( "NoiseLab: created" );
 }
 
@@ -459,6 +747,20 @@ FFResult NoiseLab::InitGL( const FFGLViewportStruct* vp )
 	loc.cycles    = shader.FindUniform( "uCycles" );
 	loc.absolute  = shader.FindUniform( "uAbsolute" );
 	loc.invert    = shader.FindUniform( "uInvert" );
+	loc.resY        = shader.FindUniform( "uResY" );
+	loc.mode        = shader.FindUniform( "uMode" );
+	loc.channels    = shader.FindUniform( "uChannels" );
+	loc.alphaNoise  = shader.FindUniform( "uAlphaNoise" );
+	loc.relief      = shader.FindUniform( "uRelief" );
+	loc.lightDir    = shader.FindUniform( "uLightDir" );
+	loc.specular    = shader.FindUniform( "uSpecular" );
+	loc.tint        = shader.FindUniform( "uTint" );
+	loc.smoothSlope = shader.FindUniform( "uSmoothSlope" );
+	loc.stopCount   = shader.FindUniform( "uStopCount" );
+	loc.stopPos     = shader.FindUniform( "uStopPos" );
+	loc.stopCol     = shader.FindUniform( "uStopCol" );
+	loc.interp      = shader.FindUniform( "uInterp" );
+	loc.shift       = shader.FindUniform( "uShift" );
 
 	firstFrame = true;
 
@@ -490,7 +792,7 @@ FFResult NoiseLab::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 
 	// --- Coordinates: fold rotation, stretch and scale into one 2x2 matrix ---
 	const double scale    = ScaleFromSlider( smoothed[ PT_SCALE ] );
-	const double stretch  = std::pow( 4.0, static_cast< double >( smoothed[ PT_STRETCH ] ) );// >1 squashes x, stretches y
+	const double stretch  = std::pow( STRETCH_MAX, static_cast< double >( std::min( std::max( smoothed[ PT_STRETCH ], -1.0f ), 1.0f ) ) );// >1 squashes x, stretches y
 	const double rotation = smoothed[ PT_ROTATION ] * PI / 180.0;
 	const double cosR     = std::cos( rotation );
 	const double sinR     = std::sin( rotation );
@@ -502,8 +804,8 @@ FFResult NoiseLab::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 
 	// --- Detail ---
 	const float octaves      = std::min( std::max( smoothed[ PT_OCTAVES ], 1.0f ), static_cast< float >( MAX_OCTAVES ) );
-	const double lacunarity  = std::min( std::max( smoothed[ PT_LACUNARITY ], 1.5f ), 4.0f );
-	const float gain         = std::min( std::max( smoothed[ PT_GAIN ], 0.2f ), 0.8f );
+	const double lacunarity  = LacunarityFromSlider( std::min( std::max( smoothed[ PT_LACUNARITY ], 0.0f ), 1.0f ) );
+	const float gain         = std::min( std::max( smoothed[ PT_GAIN ], 0.0f ), 1.0f );
 	const double warpScale   = WarpScaleFromSlider( smoothed[ PT_WARP_SCALE ] );
 
 	// --- Scroll: integrate a position, like evolution, so speed changes never teleport ---
@@ -521,12 +823,17 @@ FFResult NoiseLab::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	GLfloat octFreq[ MAX_OCTAVES ];
 	GLint octCell[ MAX_OCTAVES * 2 ];
 	GLfloat octFrac[ MAX_OCTAVES * 2 ];
-	double frequency = 1.0;
+	// Extreme Lacunarity and Scale multiply up fast (16^7 is 268 million). Past a few million
+	// cells across the screen the shader's floats can no longer address the lattice, so cap each
+	// octave there. Visually nothing is lost: that is already far finer than a pixel, i.e. static.
+	const double maxFrequency = 4194304.0 / ( 4.0 * scale * std::max( stretch, 1.0 / stretch ) );
+	double frequency          = 1.0;
 	for( int i = 0; i < MAX_OCTAVES; ++i )
 	{
-		octaveOffset[ i ].x = WrapLattice( octaveOffset[ i ].x + stepX * frequency );
-		octaveOffset[ i ].y = WrapLattice( octaveOffset[ i ].y + stepY * frequency );
-		octFreq[ i ]        = static_cast< GLfloat >( frequency );
+		const double f      = std::min( frequency, maxFrequency );
+		octaveOffset[ i ].x = WrapLattice( octaveOffset[ i ].x + stepX * f );
+		octaveOffset[ i ].y = WrapLattice( octaveOffset[ i ].y + stepY * f );
+		octFreq[ i ]        = static_cast< GLfloat >( f );
 		SplitOffset( octaveOffset[ i ].x, octCell[ i * 2 ], octFrac[ i * 2 ] );
 		SplitOffset( octaveOffset[ i ].y, octCell[ i * 2 + 1 ], octFrac[ i * 2 + 1 ] );
 		frequency *= lacunarity;
@@ -540,7 +847,7 @@ FFResult NoiseLab::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	SplitOffset( warpOffset.y, warpCell[ 1 ], warpFrac[ 1 ] );
 
 	// --- Evolution: integrate speed into a position ---
-	evolvePhase += dt * static_cast< double >( smoothed[ PT_SPEED ] );
+	evolvePhase += dt * static_cast< double >( SpeedFromSlider( std::min( std::max( smoothed[ PT_SPEED ], -1.0f ), 1.0f ) ) );
 	evolvePhase  = std::fmod( evolvePhase, static_cast< double >( EVOLVE_WRAP ) );
 	if( evolvePhase < 0.0 )
 		evolvePhase += EVOLVE_WRAP;
@@ -566,6 +873,48 @@ FFResult NoiseLab::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	const float contrast = std::pow( 2.0f, 3.0f * smoothed[ PT_CONTRAST ] );
 	const float cycles   = std::min( std::max( smoothed[ PT_CYCLES ], 1.0f ), 8.0f );
 
+	// --- Relief ---
+	// Dividing by Scale keeps the surface looking equally deep at any zoom.
+	const float relief      = HeightFromSlider( std::min( std::max( smoothed[ PT_HEIGHT ], 0.0f ), 1.0f ) ) / static_cast< float >( scale );
+	const double lightAngle = smoothed[ PT_LIGHT_ANGLE ] * PI / 180.0;// 0 = lit from the top, clockwise
+
+	// --- Gradient: collect the active stops and sort them by position ---
+	// At most six stops, so a simple insertion sort on the stack is all that's needed.
+	const int stopCount = GetStopCount();
+	GLfloat stopPos[ MAX_STOPS ];
+	GLfloat stopCol[ MAX_STOPS * 4 ];
+	int filled = 0;
+	for( int s = 0; s < stopCount; ++s )
+	{
+		const float pos = std::min( std::max( smoothed[ StopParam( s, SF_POS ) ], 0.0f ), 1.0f );
+		float hue       = smoothed[ StopParam( s, SF_HUE ) ];
+		if( hue >= 1.0f )
+			hue = 0.0f;// hue is a circle; the conversion expects [0, 1)
+		float rgba[ 4 ];
+		HSVtoRGB( hue, smoothed[ StopParam( s, SF_SAT ) ], smoothed[ StopParam( s, SF_BRI ) ], rgba[ 0 ], rgba[ 1 ], rgba[ 2 ] );
+		rgba[ 3 ] = smoothed[ StopParam( s, SF_ALPHA ) ];
+
+		int slot = filled;
+		while( slot > 0 && stopPos[ slot - 1 ] > pos )
+		{
+			stopPos[ slot ] = stopPos[ slot - 1 ];
+			for( int c = 0; c < 4; ++c )
+				stopCol[ slot * 4 + c ] = stopCol[ ( slot - 1 ) * 4 + c ];
+			--slot;
+		}
+		stopPos[ slot ] = pos;
+		for( int c = 0; c < 4; ++c )
+			stopCol[ slot * 4 + c ] = rgba[ c ];
+		++filled;
+	}
+	// Pad the unused slots with the last stop so the arrays are always fully defined.
+	for( int s = filled; s < MAX_STOPS; ++s )
+	{
+		stopPos[ s ] = stopPos[ filled - 1 ];
+		for( int c = 0; c < 4; ++c )
+			stopCol[ s * 4 + c ] = stopCol[ ( filled - 1 ) * 4 + c ];
+	}
+
 	const float aspect = currentViewport.height > 0 ? static_cast< float >( currentViewport.width ) / static_cast< float >( currentViewport.height ) : 1.0f;
 
 	//FFGL requires us to leave the context in a default state on return, so use this scoped binding to help us do that.
@@ -585,7 +934,7 @@ FFResult NoiseLab::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	glUniform1i( loc.seed, static_cast< GLint >( std::floor( smoothed[ PT_SEED ] + 0.5f ) ) );
 	glUniform1i( loc.type, smoothed[ PT_TYPE ] > 0.5f ? 1 : 0 );
 
-	glUniform1f( loc.warp, std::min( std::max( smoothed[ PT_WARP ], 0.0f ), 1.0f ) );
+	glUniform1f( loc.warp, WarpFromSlider( std::min( std::max( smoothed[ PT_WARP ], 0.0f ), 1.0f ) ) );
 	glUniform1f( loc.warpScale, static_cast< GLfloat >( warpScale ) );
 	glUniform2iv( loc.warpCell, 1, warpCell );
 	glUniform2fv( loc.warpFrac, 1, warpFrac );
@@ -596,6 +945,23 @@ FFResult NoiseLab::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	glUniform1f( loc.cycles, cycles );
 	glUniform1i( loc.absolute, smoothed[ PT_ABSOLUTE ] > 0.5f ? 1 : 0 );
 	glUniform1i( loc.invert, smoothed[ PT_INVERT ] > 0.5f ? 1 : 0 );
+
+	glUniform1f( loc.resY, static_cast< GLfloat >( std::max< FFUInt32 >( currentViewport.height, 1 ) ) );
+	glUniform1i( loc.mode, GetMode() );
+	glUniform1i( loc.channels, smoothed[ PT_CHANNELS ] > 0.5f ? 1 : 0 );
+	glUniform1i( loc.alphaNoise, smoothed[ PT_ALPHA_NOISE ] > 0.5f ? 1 : 0 );
+
+	glUniform1f( loc.relief, relief );
+	glUniform2f( loc.lightDir, static_cast< GLfloat >( std::sin( lightAngle ) ), static_cast< GLfloat >( std::cos( lightAngle ) ) );
+	glUniform1f( loc.specular, std::min( std::max( smoothed[ PT_SPECULAR ], 0.0f ), 1.0f ) );
+	glUniform1i( loc.tint, smoothed[ PT_TINT ] > 0.5f ? 1 : 0 );
+	glUniform1i( loc.smoothSlope, smoothed[ PT_SLOPE_QUALITY ] > 0.5f ? 1 : 0 );
+
+	glUniform1i( loc.stopCount, stopCount );
+	glUniform1fv( loc.stopPos, MAX_STOPS, stopPos );
+	glUniform4fv( loc.stopCol, MAX_STOPS, stopCol );
+	glUniform1i( loc.interp, static_cast< GLint >( std::floor( smoothed[ PT_INTERP ] + 0.5f ) ) );
+	glUniform1f( loc.shift, smoothed[ PT_SHIFT ] - std::floor( smoothed[ PT_SHIFT ] ) );
 
 	quad.Draw();
 
@@ -616,7 +982,46 @@ FFResult NoiseLab::SetFloatParameter( unsigned int index, float value )
 		return FF_FAIL;
 
 	params[ index ] = value;
+
+	// These two decide which other parameters are relevant, so refresh what Resolume shows.
+	if( index == PT_MODE || index == PT_STOPS )
+		UpdateVisibility( true );
+
 	return FF_SUCCESS;
+}
+
+int NoiseLab::GetMode() const
+{
+	const int mode = static_cast< int >( std::floor( params[ PT_MODE ] + 0.5f ) );
+	return std::min( std::max( mode, static_cast< int >( MODE_GRADIENT ) ), static_cast< int >( MODE_PLANAR ) );
+}
+int NoiseLab::GetStopCount() const
+{
+	const int count = static_cast< int >( std::floor( params[ PT_STOPS ] + 0.5f ) );
+	return std::min( std::max( count, 2 ), static_cast< int >( MAX_STOPS ) );
+}
+
+void NoiseLab::UpdateVisibility( bool raiseEvent )
+{
+	const int mode      = GetMode();
+	const bool relief   = mode == MODE_NORMAL || mode == MODE_PLANAR;
+	const bool planar   = mode == MODE_PLANAR;
+	const int stopCount = GetStopCount();
+
+	SetParamVisibility( PT_CHANNELS, mode == MODE_NORMAL, raiseEvent );
+	SetParamVisibility( PT_HEIGHT, relief, raiseEvent );
+	SetParamVisibility( PT_SLOPE_QUALITY, relief, raiseEvent );
+	SetParamVisibility( PT_LIGHT_ANGLE, planar, raiseEvent );
+	SetParamVisibility( PT_SPECULAR, planar, raiseEvent );
+	SetParamVisibility( PT_TINT, planar, raiseEvent );
+
+	for( int s = 0; s < MAX_STOPS; ++s )
+	{
+		// The colour picker (hue, saturation, brightness, alpha) is shown or hidden as one through
+		// its hue parameter; the position slider is separate.
+		SetParamVisibility( StopParam( s, SF_HUE ), s < stopCount, raiseEvent );
+		SetParamVisibility( StopParam( s, SF_POS ), s < stopCount, raiseEvent );
+	}
 }
 
 float NoiseLab::GetFloatParameter( unsigned int index )
@@ -638,6 +1043,19 @@ char* NoiseLab::GetParameterDisplay( unsigned int index )
 	case PT_WARP_SCALE:
 		snprintf( displayBuffer, sizeof( displayBuffer ), "%.2fx", WarpScaleFromSlider( params[ index ] ) );
 		return displayBuffer;
+	case PT_LACUNARITY:
+		snprintf( displayBuffer, sizeof( displayBuffer ), "%.2f", LacunarityFromSlider( params[ index ] ) );
+		return displayBuffer;
+	case PT_SPEED:
+		snprintf( displayBuffer, sizeof( displayBuffer ), "%.3f", SpeedFromSlider( params[ index ] ) );
+		return displayBuffer;
+	case PT_WARP:
+		snprintf( displayBuffer, sizeof( displayBuffer ), "%.2f", WarpFromSlider( params[ index ] ) );
+		return displayBuffer;
+	case PT_HEIGHT:
+		snprintf( displayBuffer, sizeof( displayBuffer ), "%.2f", HeightFromSlider( params[ index ] ) );
+		return displayBuffer;
+	case PT_STOPS:
 	case PT_SEED:
 		snprintf( displayBuffer, sizeof( displayBuffer ), "%d", static_cast< int >( std::floor( params[ index ] + 0.5f ) ) );
 		return displayBuffer;
@@ -645,6 +1063,12 @@ char* NoiseLab::GetParameterDisplay( unsigned int index )
 	case PT_LOOP:
 	case PT_ABSOLUTE:
 	case PT_INVERT:
+	case PT_MODE:
+	case PT_CHANNELS:
+	case PT_ALPHA_NOISE:
+	case PT_TINT:
+	case PT_INTERP:
+	case PT_SLOPE_QUALITY:
 		return CFFGLPlugin::GetParameterDisplay( index );
 	default:
 		if( index < NUM_PARAMS )
