@@ -22,7 +22,7 @@ public:
 	static const int MAX_OCTAVES = 8;
 	static const int MAX_STOPS   = 6;
 	static const int STOP_SLOTS  = MAX_STOPS + 2;// room for the two extra stops Gradient Loop: Wrap adds
-	static const int NUM_PARAMS  = 64;
+	static const int NUM_PARAMS  = 67;
 
 private:
 	struct Vec2d
@@ -55,7 +55,7 @@ private:
 	struct Locations
 	{
 		GLint aspect = -1, row0 = -1, row1 = -1;
-		GLint octaves = -1, gain = -1, octFreq = -1, octCell = -1, octFrac = -1;
+		GLint octaves = -1, gain = -1, octRow0 = -1, octRow1 = -1, octCell = -1, octFrac = -1;
 		GLint evolve = -1, period = -1, seed = -1, type = -1;
 		GLint warp = -1, warpScale = -1, warpCell = -1, warpFrac = -1, warpEvolve = -1, gradLoop = -1;
 		GLint lowClip = -1, clipRange = -1, contrast = -1, cycles = -1, absolute = -1, invert = -1;

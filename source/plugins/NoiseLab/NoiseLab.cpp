@@ -17,6 +17,9 @@ enum ParamID : FFUInt32
 	PT_OCTAVES,
 	PT_LACUNARITY,
 	PT_GAIN,
+	PT_TWIST,
+	PT_DRIFT_ANGLE,
+	PT_DRIFT_SPEED,
 	// Motion
 	PT_SPEED,
 	PT_LOOP,
@@ -166,6 +169,18 @@ static float SliderFromSpeed( float speed )
 {
 	return std::cbrt( speed / SPEED_MAX );
 }
+// Scroll Speed: 0..1 -> 0..16 output heights per second on a cubic curve (half way is 2).
+static const float SCROLL_MAX = 16.0f;
+static float ScrollFromSlider( float v )
+{
+	return SCROLL_MAX * v * v * v;
+}
+// Octave Drift: 0..1 -> 0..8 output heights per second, per octave, on a cubic curve.
+static const float DRIFT_MAX = 8.0f;
+static float DriftFromSlider( float v )
+{
+	return DRIFT_MAX * v * v * v;
+}
 // Warp: 0..1 -> 0..8 on a squared curve (the old maximum of 1 is now at about 35%).
 static const float WARP_MAX = 8.0f;
 static float WarpFromSlider( float v )
@@ -194,6 +209,9 @@ static void FillDefaults( float* d )
 	d[ PT_OCTAVES ]      = 4.0f;
 	d[ PT_LACUNARITY ]   = SliderFromExp( 2.0f, LACUNARITY_MIN, LACUNARITY_MAX );
 	d[ PT_GAIN ]         = 0.5f;
+	d[ PT_TWIST ]        = 0.0f;
+	d[ PT_DRIFT_ANGLE ]  = 0.0f;
+	d[ PT_DRIFT_SPEED ]  = 0.0f;
 	d[ PT_SPEED ]        = SliderFromSpeed( 0.25f );
 	d[ PT_LOOP ]         = 0.0f;
 	d[ PT_PHASE ]        = 0.0f;
@@ -304,10 +322,10 @@ static CFFGLPluginInfo PluginInfo(
 	2,                                  // API major version number
 	1,                                  // API minor version number
 	0,                                  // Plugin major version number
-	5,                                  // Plugin minor version number
+	7,                                  // Plugin minor version number
 	FF_SOURCE,                          // Plugin type
 	"Procedural noise generator",       // Plugin description
-	"NoiseLab step 4a: 16 noise types"        // About
+	"NoiseLab step 4a.3: octave twist and drift"// About
 );
 
 static const char vertexShaderCode[] = R"(#version 410 core
@@ -332,7 +350,8 @@ uniform vec2 uRow1;          // (rotation, stretch and scale folded together on 
 // --- Detail ---
 uniform float uOctaves;      // 1..8, fractional
 uniform float uGain;         // amplitude ratio between octaves
-uniform float uOctFreq[ 8 ]; // frequency of each octave (lacunarity ^ octave)
+uniform vec2 uOctRow0[ 8 ];  // rows of each octave's 2x2 matrix: its frequency (lacunarity ^ octave)
+uniform vec2 uOctRow1[ 8 ];  // combined with its rotation (Octave Twist x octave number)
 uniform ivec2 uOctCell[ 8 ]; // scroll position of each octave: whole lattice cells...
 uniform vec2 uOctFrac[ 8 ];  // ...and the fraction inside the cell
 
@@ -409,35 +428,43 @@ int wrapInt( int a, int n )
 	return a - n * int( floor( float( a ) / float( n ) ) );
 }
 
+// Every lattice column (one x,y position) runs on its own clock: a random 0..1 offset added to
+// z. Without it all columns reach a lattice plane at the same instant, and the whole picture
+// visibly eases to a halt and speeds up again once per unit of evolution.
+float columnPhase( ivec2 c, uint seed )
+{
+	return float( pcg( uint( c.x ) + pcg( uint( c.y ) + seed + 0x9e3779b9u ) ) >> 8u ) / 16777216.0;
+}
+
+// One corner column of the gradient noise: its contribution at xy offset d, blended along z.
+float gradColumn( ivec2 c, vec2 d, float z, int periodZ, uint seed )
+{
+	float zc = z + columnPhase( c, seed );
+	float zf = floor( zc );
+	float fz = zc - zf;
+	float wz = fz * fz * fz * ( fz * ( fz * 6.0 - 15.0 ) + 10.0 );
+	int iz   = int( zf );
+	float n0 = gradDot( hash3( ivec3( c, wrapInt( iz, periodZ ) ), seed ), vec3( d, fz ) );
+	float n1 = gradDot( hash3( ivec3( c, wrapInt( iz + 1, periodZ ) ), seed ), vec3( d, fz - 1.0 ) );
+	return mix( n0, n1, wz );
+}
+
 // 3D gradient noise in roughly -1..1.
 //  p       position; xy is small (screen sized), the scroll lives in 'cell'
 //  cell    whole lattice cells to shift xy by
 //  periodZ the noise repeats along z after this many units, which makes looping exact and free
 float pnoise( vec3 p, ivec2 cell, int periodZ, uint seed )
 {
-	vec3 pf = floor( p );
-	vec3 f  = p - pf;
-	vec3 w  = f * f * f * ( f * ( f * 6.0 - 15.0 ) + 10.0 );
+	vec2 pf = floor( p.xy );
+	vec2 f  = p.xy - pf;
+	vec2 w  = f * f * f * ( f * ( f * 6.0 - 15.0 ) + 10.0 );
+	ivec2 i = ivec2( pf ) + cell;
 
-	ivec2 i = ivec2( pf.xy ) + cell;
-	int iz  = int( pf.z );
-	int z0  = wrapInt( iz, periodZ );
-	int z1  = wrapInt( iz + 1, periodZ );
-
-	float n000 = gradDot( hash3( ivec3( i.x,     i.y,     z0 ), seed ), f );
-	float n100 = gradDot( hash3( ivec3( i.x + 1, i.y,     z0 ), seed ), f - vec3( 1.0, 0.0, 0.0 ) );
-	float n010 = gradDot( hash3( ivec3( i.x,     i.y + 1, z0 ), seed ), f - vec3( 0.0, 1.0, 0.0 ) );
-	float n110 = gradDot( hash3( ivec3( i.x + 1, i.y + 1, z0 ), seed ), f - vec3( 1.0, 1.0, 0.0 ) );
-	float n001 = gradDot( hash3( ivec3( i.x,     i.y,     z1 ), seed ), f - vec3( 0.0, 0.0, 1.0 ) );
-	float n101 = gradDot( hash3( ivec3( i.x + 1, i.y,     z1 ), seed ), f - vec3( 1.0, 0.0, 1.0 ) );
-	float n011 = gradDot( hash3( ivec3( i.x,     i.y + 1, z1 ), seed ), f - vec3( 0.0, 1.0, 1.0 ) );
-	float n111 = gradDot( hash3( ivec3( i.x + 1, i.y + 1, z1 ), seed ), f - vec3( 1.0, 1.0, 1.0 ) );
-
-	float nx00 = mix( n000, n100, w.x );
-	float nx10 = mix( n010, n110, w.x );
-	float nx01 = mix( n001, n101, w.x );
-	float nx11 = mix( n011, n111, w.x );
-	return mix( mix( nx00, nx10, w.y ), mix( nx01, nx11, w.y ), w.z );
+	float n00 = gradColumn( i,                 f,                   p.z, periodZ, seed );
+	float n10 = gradColumn( i + ivec2( 1, 0 ), f - vec2( 1.0, 0.0 ), p.z, periodZ, seed );
+	float n01 = gradColumn( i + ivec2( 0, 1 ), f - vec2( 0.0, 1.0 ), p.z, periodZ, seed );
+	float n11 = gradColumn( i + ivec2( 1, 1 ), f - vec2( 1.0, 1.0 ), p.z, periodZ, seed );
+	return mix( mix( n00, n10, w.x ), mix( n01, n11, w.x ), w.y );
 }
 
 // Domain warp: how far to push the sampling position, in pattern units. Two octaves of a
@@ -464,73 +491,79 @@ float hashValue( ivec3 p, uint seed )
 	return float( hash3( p, seed ) >> 8u ) / 8388607.5 - 1.0;
 }
 
-// Random values on a square lattice, in -1..1, blended between neighbours.
-//  edge  half-width of the blend across each cell: 0.5 is ordinary smooth value noise, small
-//        values give flat squares with soft edges, near zero gives hard-edged squares.
-// Along z the values always fade smoothly, so squares cross-fade as the noise evolves.
-float latticeNoise( vec3 p, ivec2 cell, int periodZ, uint seed, float edge )
+// One lattice point's random value, cross-fading to its next value on its own clock.
+float valueColumn( ivec2 c, float z, int periodZ, uint seed )
 {
-	vec3 pf = floor( p );
-	vec3 f  = p - pf;
-	vec2 w  = smoothstep( 0.5 - edge, 0.5 + edge, f.xy );
-	float wz = f.z * f.z * ( 3.0 - 2.0 * f.z );
-
-	ivec2 i = ivec2( pf.xy ) + cell;
-	int iz  = int( pf.z );
-	int z0  = wrapInt( iz, periodZ );
-	int z1  = wrapInt( iz + 1, periodZ );
-
-	float a0 = mix( mix( hashValue( ivec3( i.x, i.y, z0 ), seed ), hashValue( ivec3( i.x + 1, i.y, z0 ), seed ), w.x ),
-	                mix( hashValue( ivec3( i.x, i.y + 1, z0 ), seed ), hashValue( ivec3( i.x + 1, i.y + 1, z0 ), seed ), w.x ), w.y );
-	float a1 = mix( mix( hashValue( ivec3( i.x, i.y, z1 ), seed ), hashValue( ivec3( i.x + 1, i.y, z1 ), seed ), w.x ),
-	                mix( hashValue( ivec3( i.x, i.y + 1, z1 ), seed ), hashValue( ivec3( i.x + 1, i.y + 1, z1 ), seed ), w.x ), w.y );
-	return mix( a0, a1, wz );
+	float zc = z + columnPhase( c, seed );
+	float zf = floor( zc );
+	float fz = zc - zf;
+	float wz = fz * fz * ( 3.0 - 2.0 * fz );
+	int iz   = int( zf );
+	return mix( hashValue( ivec3( c, wrapInt( iz, periodZ ) ), seed ), hashValue( ivec3( c, wrapInt( iz + 1, periodZ ) ), seed ), wz );
 }
 
-// Voronoi (cellular) noise. One feature point per lattice cell; returns the distance to the
-// nearest point, the distance to the second nearest, and a random 0..1 id for the nearest cell.
-// The points drift between random positions as z advances, which keeps looping exact.
-vec3 voronoi( vec3 p, ivec2 cell, int periodZ, uint seed )
+// Random values on a square lattice, in -1..1, blended between neighbours.
+//  edge  half-width of the blend across each cell: 0.5 is ordinary smooth value noise, small
+//        values give flat squares with soft edges, zero gives hard squares with no blend at all
+//        (so no in-between values appear along the borders).
+float latticeNoise( vec3 p, ivec2 cell, int periodZ, uint seed, float edge )
 {
-	vec2 pf  = floor( p.xy );
-	vec2 f   = p.xy - pf;
-	ivec2 i  = ivec2( pf ) + cell;
-	float zf = floor( p.z );
-	float wz = p.z - zf;
-	wz = wz * wz * ( 3.0 - 2.0 * wz );
-	int z0 = wrapInt( int( zf ), periodZ );
-	int z1 = wrapInt( int( zf ) + 1, periodZ );
+	vec2 pf = floor( p.xy );
+	vec2 f  = p.xy - pf;
+	ivec2 i = ivec2( pf ) + cell;
+
+	if( edge <= 0.0 )
+		return valueColumn( i + ivec2( step( 0.5, f ) ), p.z, periodZ, seed );
+
+	vec2 w = smoothstep( 0.5 - edge, 0.5 + edge, f );
+	return mix( mix( valueColumn( i, p.z, periodZ, seed ), valueColumn( i + ivec2( 1, 0 ), p.z, periodZ, seed ), w.x ),
+	            mix( valueColumn( i + ivec2( 0, 1 ), p.z, periodZ, seed ), valueColumn( i + ivec2( 1, 1 ), p.z, periodZ, seed ), w.x ), w.y );
+}
 
 )"
 // MSVC limits a single string literal to about 16 KB, so the shader is written as several
 // adjacent literals, which the compiler joins into one string.
-R"(	float d1 = 8.0;
+R"(// Voronoi (cellular) noise. Returns the distance to the nearest feature point, the distance to
+// the second nearest, and a random 0..1 id for the nearest one.
+// The points are scattered through 3D space and the picture is a slice through it at height z,
+// so as z advances cells grow, shrink, appear and vanish at a steady rate. Wrapping the z cell
+// index keeps looping exact.
+vec3 voronoi( vec3 p, ivec2 cell, int periodZ, uint seed )
+{
+	vec3 pf = floor( p );
+	vec3 f  = p - pf;
+	ivec2 i = ivec2( pf.xy ) + cell;
+	int iz  = int( pf.z );
+
+	float d1 = 8.0;
 	float d2 = 8.0;
 	uint id  = 0u;
-	for( int y = -1; y <= 1; ++y )
+	for( int z = -1; z <= 1; ++z )
 	{
-		for( int x = -1; x <= 1; ++x )
+		int cz = wrapInt( iz + z, periodZ );
+		for( int y = -1; y <= 1; ++y )
 		{
-			ivec2 c = i + ivec2( x, y );
-			uint h0 = hash3( ivec3( c, z0 ), seed );
-			uint h1 = hash3( ivec3( c, z1 ), seed );
-			vec2 o0 = vec2( float( h0 & 65535u ), float( h0 >> 16u ) ) / 65535.0;
-			vec2 o1 = vec2( float( h1 & 65535u ), float( h1 >> 16u ) ) / 65535.0;
-			vec2 d  = vec2( float( x ), float( y ) ) + mix( o0, o1, wz ) - f;
-			float dist = dot( d, d );
-			if( dist < d1 )
+			for( int x = -1; x <= 1; ++x )
 			{
-				d2 = d1;
-				d1 = dist;
-				id = hash3( ivec3( c, 0 ), seed + 77u );
-			}
-			else if( dist < d2 )
-			{
-				d2 = dist;
+				// One hash gives all three coordinates of this cell's point (10 bits each).
+				uint h = hash3( ivec3( i + ivec2( x, y ), cz ), seed );
+				vec3 o = vec3( float( h & 1023u ), float( ( h >> 10u ) & 1023u ), float( ( h >> 20u ) & 1023u ) ) / 1023.0;
+				vec3 d = vec3( float( x ), float( y ), float( z ) ) + o - f;
+				float dist = dot( d, d );
+				if( dist < d1 )
+				{
+					d2 = d1;
+					d1 = dist;
+					id = h;
+				}
+				else if( dist < d2 )
+				{
+					d2 = dist;
+				}
 			}
 		}
 	}
-	return vec3( sqrt( d1 ), sqrt( d2 ), float( id >> 8u ) / 16777215.0 );
+	return vec3( sqrt( d1 ), sqrt( d2 ), float( pcg( id ) >> 8u ) / 16777215.0 );
 }
 
 // Two unrelated noise values, used to push a position around inside a type.
@@ -547,19 +580,19 @@ float STD( float raw, vec2 cal )
 {
 	return ( raw - cal.x ) * cal.y;
 }
-#define CAL_BOX vec2( 0.0, 1.05 )
+#define CAL_BOX vec2( 0.0, 1.0 )
 #define CAL_VL vec2( 0.0, 1.0 )
 #define CAL_CELL vec2( 0.0, 0.95 )
 #define CAL_MOD vec2( 0.0, 0.75 )
-#define CAL_TURB vec2( 0.0, 0.62 )
-#define CAL_RIDGED vec2( 0.626, 1.2 )
-#define CAL_DISP_TURB vec2( 0.0, 0.55 )
+#define CAL_TURB vec2( 0.0, 1.05 )
+#define CAL_RIDGED vec2( 0.63, 1.2 )
+#define CAL_DISP_TURB vec2( 0.0, 1.0 )
 #define CAL_WAVY_TURB vec2( 0.683, 2.2 )
-#define CAL_VORONOI1 vec2( 0.418, 1.52 )
-#define CAL_VORONOI2 vec2( 0.62, 1.4 )
-#define CAL_VORONOI3 vec2( 0.36, 1.5 )
+#define CAL_VORONOI1 vec2( 0.512, 1.6 )
+#define CAL_VORONOI2 vec2( 0.64, 1.6 )
+#define CAL_VORONOI3 vec2( 0.27, 1.7 )
 #define CAL_CELL_VORONOI vec2( 0.5, 1.15 )
-#define CAL_DISP_VORONOI vec2( 0.418, 1.52 )
+#define CAL_DISP_VORONOI vec2( 0.512, 1.6 )
 
 // One octave of the selected noise type, standardised as described above.
 //  carry  state passed from octave to octave (the ridged type uses it so detail gathers on ridges)
@@ -585,13 +618,16 @@ float octaveSignal( vec3 q, ivec2 cell, int period, uint seed, inout float carry
 	}
 
 	if( uType == 5 )// Cell Noise: hard-edged squares of random grey
-		return STD( latticeNoise( q, cell, period, seed, 0.004 ), CAL_CELL );
+		return STD( latticeNoise( q, cell, period, seed, 0.0 ), CAL_CELL );
 
 	if( uType == 6 )// Mod Noise: like Cell Noise but values bunch toward mid grey
-		return STD( 0.5 * ( latticeNoise( q, cell, period, seed, 0.004 ) + latticeNoise( q, cell, period, seed + 5u, 0.004 ) ), CAL_MOD );
+		return STD( 0.5 * ( latticeNoise( q, cell, period, seed, 0.0 ) + latticeNoise( q, cell, period, seed + 5u, 0.0 ) ), CAL_MOD );
 
-	if( uType == 7 )// Turbulence: C4D's is a soft, low-contrast cloud, so smooth value noise without folds
-		return STD( latticeNoise( q, cell, period, seed, 0.5 ), CAL_TURB );
+	if( uType == 7 )// Turbulence: C4D's is a soft, low-contrast cloud. Two gradient noises averaged: softer
+	{               // than FBM and with none of the square grain that value noise shows.
+		float soft = 0.5 * ( pnoise( q, cell, period, seed ) + pnoise( q + vec3( 0.5, 0.5, 0.0 ), cell, period, seed + 9u ) );
+		return STD( soft, CAL_TURB );
+	}
 
 	if( uType == 8 )// Ridged: inverted folds squared into sharp ridges, detail weighted onto the ridges
 	{
@@ -605,7 +641,9 @@ float octaveSignal( vec3 q, ivec2 cell, int period, uint seed, inout float carry
 	if( uType == 9 )// Displaced Turbulence: the soft cloud sampled at a noise-displaced position (wispy, broken up)
 	{
 		vec2 push = noise2( vec3( q.xy * 2.0, q.z ), cell * 2, period, seed );
-		return STD( latticeNoise( q + vec3( push * 0.45, 0.0 ), cell, period, seed, 0.5 ), CAL_DISP_TURB );
+		vec3 qd = q + vec3( push * 0.45, 0.0 );
+		float soft = 0.5 * ( pnoise( qd, cell, period, seed ) + pnoise( qd + vec3( 0.5, 0.5, 0.0 ), cell, period, seed + 9u ) );
+		return STD( soft, CAL_DISP_TURB );
 	}
 
 	if( uType == 10 )// Wavy Turbulence: bright ragged crests around darker pits, on a stirred position
@@ -651,7 +689,7 @@ float fractal( vec2 p, float octaves, uint seed )
 		if( weight <= 0.0 )
 			break;
 		float a = weight * amp;
-		vec3 q  = vec3( p * uOctFreq[ i ] + uOctFrac[ i ], uEvolve * zMul );
+		vec3 q  = vec3( vec2( dot( uOctRow0[ i ], p ), dot( uOctRow1[ i ], p ) ) + uOctFrac[ i ], uEvolve * zMul );
 		sum   += a * octaveSignal( q, uOctCell[ i ], period, seed + uint( i ) * 31u, carry );
 		power += a * a;
 		amp    *= uGain;
@@ -680,7 +718,8 @@ float shape( float v )
 	return v;
 }
 
-// The finished 0..1 noise value at a screen position. Everything (warp, fractal, shaping) is in
+)"
+R"(// The finished 0..1 noise value at a screen position. Everything (warp, fractal, shaping) is in
 // here so the relief modes can sample neighbouring positions.
 float heightAt( vec2 s )
 {
@@ -704,8 +743,7 @@ float heightAt( vec2 s )
 	return shape( clamp( 0.5 + 0.6 * n, 0.0, 1.0 ) );
 }
 
-)"
-R"(// Multi-stop gradient lookup. Stops arrive sorted, so walking them in order and blending toward
+// Multi-stop gradient lookup. Stops arrive sorted, so walking them in order and blending toward
 // each one in turn leaves exactly the two neighbours of v contributing.
 vec4 gradient( float v )
 {
@@ -851,6 +889,17 @@ NoiseLab::NoiseLab()
 	SetParamInfof( PT_GAIN, "Gain", FF_TYPE_STANDARD );
 	SetParamGroup( PT_GAIN, "Detail" );
 
+	SetParamInfof( PT_TWIST, "Octave Twist", FF_TYPE_STANDARD );
+	SetParamRange( PT_TWIST, 0.0f, 360.0f );
+	SetParamGroup( PT_TWIST, "Detail" );
+
+	SetParamInfof( PT_DRIFT_ANGLE, "Drift Angle", FF_TYPE_STANDARD );
+	SetParamRange( PT_DRIFT_ANGLE, 0.0f, 360.0f );
+	SetParamGroup( PT_DRIFT_ANGLE, "Detail" );
+
+	SetParamInfof( PT_DRIFT_SPEED, "Octave Drift", FF_TYPE_STANDARD );
+	SetParamGroup( PT_DRIFT_SPEED, "Detail" );
+
 	// --- Motion ---
 	SetParamInfof( PT_SPEED, "Evolve Speed", FF_TYPE_STANDARD );
 	SetParamRange( PT_SPEED, -1.0f, 1.0f );
@@ -867,7 +916,6 @@ NoiseLab::NoiseLab()
 	SetParamGroup( PT_SCROLL_ANGLE, "Motion" );
 
 	SetParamInfof( PT_SCROLL_SPEED, "Scroll Speed", FF_TYPE_STANDARD );
-	SetParamRange( PT_SCROLL_SPEED, 0.0f, 2.0f );
 	SetParamGroup( PT_SCROLL_SPEED, "Motion" );
 
 	// --- Warp ---
@@ -1003,7 +1051,8 @@ FFResult NoiseLab::InitGL( const FFGLViewportStruct* vp )
 	loc.row1      = shader.FindUniform( "uRow1" );
 	loc.octaves   = shader.FindUniform( "uOctaves" );
 	loc.gain      = shader.FindUniform( "uGain" );
-	loc.octFreq   = shader.FindUniform( "uOctFreq" );
+	loc.octRow0   = shader.FindUniform( "uOctRow0" );
+	loc.octRow1   = shader.FindUniform( "uOctRow1" );
 	loc.octCell   = shader.FindUniform( "uOctCell" );
 	loc.octFrac   = shader.FindUniform( "uOctFrac" );
 	loc.evolve    = shader.FindUniform( "uEvolve" );
@@ -1088,14 +1137,27 @@ FFResult NoiseLab::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	// converted to pattern units with the same matrix the pixels use, and each octave keeps its
 	// own running position so changing Lacunarity or Scale zooms about the screen centre.
 	const double scrollAngle = smoothed[ PT_SCROLL_ANGLE ] * PI / 180.0;
-	const double scrollStep  = static_cast< double >( smoothed[ PT_SCROLL_SPEED ] ) * dt;
+	const double scrollStep  = static_cast< double >( ScrollFromSlider( std::min( std::max( smoothed[ PT_SCROLL_SPEED ], 0.0f ), 1.0f ) ) ) * dt;
 	const double screenX     = std::cos( scrollAngle ) * scrollStep;
 	const double screenY     = std::sin( scrollAngle ) * scrollStep;
 	// Moving the picture one way means moving the sample position the other way.
 	const double stepX = -( m00 * screenX + m01 * screenY );
 	const double stepY = -( m10 * screenX + m11 * screenY );
 
-	GLfloat octFreq[ MAX_OCTAVES ];
+	// Octave Drift: an extra scroll that grows with the octave number (octave 1 is unaffected,
+	// octave 2 gets it once, octave 3 twice...), so the layers of detail slide over each other.
+	const double driftAngle = smoothed[ PT_DRIFT_ANGLE ] * PI / 180.0;
+	const double driftStep  = static_cast< double >( DriftFromSlider( std::min( std::max( smoothed[ PT_DRIFT_SPEED ], 0.0f ), 1.0f ) ) ) * dt;
+	const double driftX     = std::cos( driftAngle ) * driftStep;
+	const double driftY     = std::sin( driftAngle ) * driftStep;
+	const double driftStepX = -( m00 * driftX + m01 * driftY );
+	const double driftStepY = -( m10 * driftX + m11 * driftY );
+	// Octave Twist: each octave is turned this much further than the one before. At 360 every
+	// octave is back where it started, so the parameter wraps seamlessly.
+	const double twist = smoothed[ PT_TWIST ] * PI / 180.0;
+
+	GLfloat octRow0[ MAX_OCTAVES * 2 ];
+	GLfloat octRow1[ MAX_OCTAVES * 2 ];
 	GLint octCell[ MAX_OCTAVES * 2 ];
 	GLfloat octFrac[ MAX_OCTAVES * 2 ];
 	// Extreme Lacunarity and Scale multiply up fast (16^7 is 268 million). Past a few million
@@ -1105,10 +1167,19 @@ FFResult NoiseLab::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	double frequency          = 1.0;
 	for( int i = 0; i < MAX_OCTAVES; ++i )
 	{
-		const double f      = std::min( frequency, maxFrequency );
-		octaveOffset[ i ].x = WrapLattice( octaveOffset[ i ].x + stepX * f );
-		octaveOffset[ i ].y = WrapLattice( octaveOffset[ i ].y + stepY * f );
-		octFreq[ i ]        = static_cast< GLfloat >( f );
+		const double f = std::min( frequency, maxFrequency );
+		// This octave's own rotation and frequency as one matrix. Its scroll step goes through the
+		// same matrix, so what moves on screen is what the shader samples.
+		const double cosT = std::cos( twist * i );
+		const double sinT = std::sin( twist * i );
+		const double sx   = stepX + driftStepX * i;
+		const double sy   = stepY + driftStepY * i;
+		octaveOffset[ i ].x = WrapLattice( octaveOffset[ i ].x + ( cosT * sx - sinT * sy ) * f );
+		octaveOffset[ i ].y = WrapLattice( octaveOffset[ i ].y + ( sinT * sx + cosT * sy ) * f );
+		octRow0[ i * 2 ]     = static_cast< GLfloat >( cosT * f );
+		octRow0[ i * 2 + 1 ] = static_cast< GLfloat >( -sinT * f );
+		octRow1[ i * 2 ]     = static_cast< GLfloat >( sinT * f );
+		octRow1[ i * 2 + 1 ] = static_cast< GLfloat >( cosT * f );
 		SplitOffset( octaveOffset[ i ].x, octCell[ i * 2 ], octFrac[ i * 2 ] );
 		SplitOffset( octaveOffset[ i ].y, octCell[ i * 2 + 1 ], octFrac[ i * 2 + 1 ] );
 		frequency *= lacunarity;
@@ -1231,7 +1302,8 @@ FFResult NoiseLab::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 
 	glUniform1f( loc.octaves, octaves );
 	glUniform1f( loc.gain, gain );
-	glUniform1fv( loc.octFreq, MAX_OCTAVES, octFreq );
+	glUniform2fv( loc.octRow0, MAX_OCTAVES, octRow0 );
+	glUniform2fv( loc.octRow1, MAX_OCTAVES, octRow1 );
 	glUniform2iv( loc.octCell, MAX_OCTAVES, octCell );
 	glUniform2fv( loc.octFrac, MAX_OCTAVES, octFrac );
 
@@ -1363,6 +1435,12 @@ char* NoiseLab::GetParameterDisplay( unsigned int index )
 		return displayBuffer;
 	case PT_HEIGHT:
 		snprintf( displayBuffer, sizeof( displayBuffer ), "%.2f", HeightFromSlider( params[ index ] ) );
+		return displayBuffer;
+	case PT_DRIFT_SPEED:
+		snprintf( displayBuffer, sizeof( displayBuffer ), "%.3f", DriftFromSlider( params[ index ] ) );
+		return displayBuffer;
+	case PT_SCROLL_SPEED:
+		snprintf( displayBuffer, sizeof( displayBuffer ), "%.3f", ScrollFromSlider( params[ index ] ) );
 		return displayBuffer;
 	case PT_STOPS:
 	case PT_SEED:
