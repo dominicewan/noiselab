@@ -501,7 +501,10 @@ vec3 voronoi( vec3 p, ivec2 cell, int periodZ, uint seed )
 	int z0 = wrapInt( int( zf ), periodZ );
 	int z1 = wrapInt( int( zf ) + 1, periodZ );
 
-	float d1 = 8.0;
+)"
+// MSVC limits a single string literal to about 16 KB, so the shader is written as several
+// adjacent literals, which the compiler joins into one string.
+R"(	float d1 = 8.0;
 	float d2 = 8.0;
 	uint id  = 0u;
 	for( int y = -1; y <= 1; ++y )
@@ -701,7 +704,8 @@ float heightAt( vec2 s )
 	return shape( clamp( 0.5 + 0.6 * n, 0.0, 1.0 ) );
 }
 
-// Multi-stop gradient lookup. Stops arrive sorted, so walking them in order and blending toward
+)"
+R"(// Multi-stop gradient lookup. Stops arrive sorted, so walking them in order and blending toward
 // each one in turn leaves exactly the two neighbours of v contributing.
 vec4 gradient( float v )
 {
